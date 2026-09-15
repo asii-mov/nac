@@ -22,6 +22,8 @@ use nac_core::{
 };
 use nac_server::{serve_with_policy, BindPolicy, ServerOptions, SessionManager};
 
+mod appsec_cli;
+
 /// Root NAC product version, intentionally independent of internal crate versions.
 const RELEASE_VERSION: &str = env!("NAC_PRODUCT_VERSION");
 const BUILD_VERSION: &str = concat!(
@@ -54,6 +56,10 @@ struct Cli {
     reason = "Clap owns the closed root command payloads and boxing would complicate derive wiring"
 )]
 enum RootCommand {
+    /// Inspect appsec prerequisites offline without executing a campaign
+    #[command(version = RELEASE_VERSION, long_version = BUILD_VERSION)]
+    Appsec(appsec_cli::AppsecCli),
+
     /// Manage ChatGPT credentials used by Codex models
     #[command(version = RELEASE_VERSION, long_version = BUILD_VERSION)]
     CodexAuth(CodexAuthCli),
@@ -486,6 +492,7 @@ async fn run() -> Result<()> {
         Some(RootCommand::CodexAuth(auth)) => run_codex_auth_cli(auth).await,
         Some(RootCommand::ArceeAuth(auth)) => run_arcee_auth_cli(auth).await,
         Some(RootCommand::Upgrade(upgrade)) => run_upgrade_cli(upgrade).await,
+        Some(RootCommand::Appsec(appsec)) => appsec_cli::run(appsec),
     }
 }
 
