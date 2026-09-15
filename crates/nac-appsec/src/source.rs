@@ -8,6 +8,21 @@ use std::{
 
 pub(crate) fn validate_manifest(manifest: &Manifest) -> Result<()> {
     crate::require_version(manifest.schema_version)?;
+    if let Some(research) = &manifest.research {
+        research.verify()?;
+        ensure!(
+            research.stages.len() == manifest.tasks.len()
+                && manifest
+                    .tasks
+                    .iter()
+                    .all(|task| research.stages.contains_key(&task.key)),
+            "every task must have exactly one frozen stage assignment"
+        );
+        ensure!(
+            research.brief.max_investigative_agents == manifest.max_concurrency,
+            "brief concurrency differs from admission policy"
+        );
+    }
     let watchdog = manifest.watchdog;
     ensure!(
         watchdog.warn_after_ms > 0
@@ -114,15 +129,7 @@ pub(crate) fn validate_source(manifest: &Manifest, source: &SourceRef) -> Result
         "source commit differs from pinned input"
     );
     ensure!(
-        !source.path.is_empty()
-            && source
-                .path
-                .split('/')
-                .all(|part| !part.is_empty() && part != "." && part != "..")
-            && Path::new(&source.path)
-                .components()
-                .all(|c| matches!(c, Component::Normal(_)))
-            && !source.path.contains(['\0', '\n', '\r', ':', '\\']),
+        safe_source_path(&source.path),
         "source path must be a safe relative path"
     );
     ensure!(valid_hash(&source.content_sha256), "malformed source hash");
@@ -152,8 +159,32 @@ pub(crate) fn validate_source(manifest: &Manifest, source: &SourceRef) -> Result
     Ok(())
 }
 
-fn git(checkout: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
+pub(crate) fn safe_source_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.split('/').all(|part| {
+            !part.is_empty() && part != "." && part != ".." && !part.eq_ignore_ascii_case(".git")
+        })
+        && Path::new(path)
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+        && !path.contains(['\0', '\n', '\r', ':', '\\'])
+}
+
+pub(crate) fn git(checkout: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
+    use std::{
+        io::Read,
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    const MAX_BYTES: u64 = 16 * 1024 * 1024;
+    let mut child = Command::new("git")
+        .arg("--no-pager")
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
         .arg("--no-replace-objects")
         .arg("--literal-pathspecs")
         .arg("-C")
@@ -167,7 +198,40 @@ fn git(checkout: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_NO_LAZY_FETCH", "1")
         .env("GIT_ALLOW_PROTOCOL", "")
-        .output()?;
-    ensure!(output.status.success(), "pinned source lookup failed; required objects must already be local; implicit fetch is prohibited");
-    Ok(output.stdout)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("source pipe missing"))?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout
+            .take(MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+    });
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() >= Duration::from_secs(10) {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("pinned source operation timed out");
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let bytes = reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("source reader failed"))??;
+    ensure!(
+        bytes.len() as u64 <= MAX_BYTES,
+        "pinned source output exceeds bound"
+    );
+    ensure!(status.success(), "pinned source lookup failed; required objects must already be local; implicit fetch is prohibited");
+    Ok(bytes)
 }

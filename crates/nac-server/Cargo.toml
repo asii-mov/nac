@@ -17,6 +17,8 @@ path = "src/main.rs"
 nac-appsec = { path = "../nac-appsec" }
 nac-contracts = { path = "../nac-contracts" }
 nac-core = { path = "../nac-core", features = ["openapi"] }
+nac-process = { path = "../nac-process" }
+fs2 = "0.4"
 nac-managed = { path = "../nac-managed", features = ["openapi"] }
 anyhow.workspace = true
 async-stream = "0.3"

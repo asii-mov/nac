@@ -374,11 +374,34 @@ pub async fn execute_tool(
     .await
 }
 
+pub async fn execute_tool_with_context(
+    name: &str,
+    args: Value,
+    runtime: &ToolRuntime,
+    client: &crate::model::ModelClient,
+    context: &kernel::ToolCallContext,
+) -> ToolResult {
+    if let Some(control) = &runtime.worker_control {
+        return match control
+            .bounded("tool", async {
+                let result = execute_available_tool(name, args, runtime, client, context).await;
+                control.check_output(serde_json::to_vec(&result.content)?.len())?;
+                Ok(result)
+            })
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => ToolResult::text(error.to_string(), true),
+        };
+    }
+    execute_available_tool(name, args, runtime, client, context).await
+}
+
 #[expect(
     clippy::expect_used,
-    reason = "the static first-party tool registry is collision-checked during construction"
+    reason = "the static first-party registry is collision-checked"
 )]
-pub async fn execute_tool_with_context(
+async fn execute_available_tool(
     name: &str,
     args: Value,
     runtime: &ToolRuntime,
@@ -453,6 +476,7 @@ pub(crate) fn test_runtime() -> ToolRuntime {
     let workspace_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let backend = crate::sandbox::execution_backend_from_sandbox(None, &workspace_cwd);
     ToolRuntime {
+        worker_control: None,
         command_cancellation: crate::tools::ThreadCancellation::default(),
         config_cwd: workspace_cwd.clone(),
         workspace_cwd,

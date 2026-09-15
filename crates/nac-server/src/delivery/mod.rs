@@ -1,3 +1,4 @@
+pub(crate) mod appsec_mcp;
 pub(crate) mod contracts;
 pub(crate) mod credentials;
 pub(crate) mod delegation;

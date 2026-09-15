@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::AgentMode;
+use super::{AgentMode, Arc, ToolDefinition};
 
 /// Credential source for the request-scoped first-party web capability.
 /// Workers are populated only from the post-MCP delegated snapshot; eligible
@@ -39,6 +39,51 @@ impl NativeWebCapabilities {
             },
             Self::Worker(credential) => Ok(credential.clone()),
         }
+    }
+}
+
+impl super::Agent {
+    pub(crate) fn set_worker_web_credential(&mut self, credential: Option<String>) {
+        self.native_web_capabilities
+            .set_worker_credential(credential);
+    }
+
+    /// Build one immutable model-request capability view. The Exa credential
+    /// and the tool names are replaced together before the request and the
+    /// resulting runtime is cloned into exactly that response's tool round.
+    pub(super) fn refresh_model_request_capabilities(&mut self) -> Result<Vec<ToolDefinition>> {
+        let credential = self.native_web_capabilities.resolve_credential()?;
+        Ok(self.install_model_request_capabilities(credential))
+    }
+
+    fn install_model_request_capabilities(
+        &mut self,
+        credential: Option<String>,
+    ) -> Vec<ToolDefinition> {
+        let credential = credential
+            .filter(|_| self.native_web_capabilities.is_eligible())
+            .map(crate::tools::web::ExaCredential::new)
+            .map(Arc::new);
+        let mut definitions = self.tool_defs.clone();
+        if credential.is_some() {
+            definitions.extend(crate::tools::web::definitions());
+        }
+        self.tool_runtime.allowed_tools = Some(Arc::new(
+            definitions
+                .iter()
+                .map(|definition| definition.function.name.clone())
+                .collect(),
+        ));
+        self.tool_runtime.web_credential = credential;
+        definitions
+    }
+
+    #[cfg(test)]
+    pub(super) fn model_request_capabilities_for_test(
+        &mut self,
+        credential: Option<&str>,
+    ) -> Vec<ToolDefinition> {
+        self.install_model_request_capabilities(credential.map(str::to_string))
     }
 }
 

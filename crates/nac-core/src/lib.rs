@@ -83,6 +83,7 @@ pub mod types;
 pub mod upgrade;
 pub mod view;
 mod worker;
+mod worker_control;
 mod worker_credentials;
 pub mod workspace;
 

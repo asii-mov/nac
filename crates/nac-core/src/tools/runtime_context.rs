@@ -8,6 +8,7 @@ static SHARED_WORKSPACE_GATES: LazyLock<
 
 #[derive(Clone)]
 pub struct ToolRuntime {
+    pub(crate) worker_control: Option<crate::worker_control::ManagedWorkerControl>,
     pub workspace_cwd: PathBuf,
     pub config_cwd: PathBuf,
     pub store_path: PathBuf,

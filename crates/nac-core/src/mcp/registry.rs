@@ -134,7 +134,30 @@ impl McpRegistry {
         let handler = NacMcpClientHandler {
             roots: mcp_roots_for_policy(cwd, sandbox, root_policy)?,
         };
+        Self::load_servers(cwd, servers, handler).await
+    }
 
+    pub(crate) async fn load_explicit(
+        cwd: &Path,
+        servers: BTreeMap<String, McpServerConfig>,
+    ) -> Result<Arc<Self>> {
+        let outcome =
+            Self::load_servers(cwd, servers, NacMcpClientHandler { roots: Vec::new() }).await?;
+        anyhow::ensure!(
+            outcome.skipped.is_empty(),
+            "explicit MCP server failed to load: {:?}",
+            outcome.skipped
+        );
+        outcome
+            .registry
+            .ok_or_else(|| anyhow!("explicit MCP inventory is empty"))
+    }
+
+    async fn load_servers(
+        cwd: &Path,
+        servers: BTreeMap<String, McpServerConfig>,
+        handler: NacMcpClientHandler,
+    ) -> Result<McpLoadOutcome> {
         let mut tools = HashMap::new();
         let mut skipped = Vec::new();
         let mut seen_names = HashMap::<String, usize>::new();

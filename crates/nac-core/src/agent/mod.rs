@@ -204,6 +204,24 @@ struct TranscriptLogSink {
 }
 
 impl Agent {
+    pub(crate) fn control_worker(
+        &mut self,
+        control: crate::worker_control::ManagedWorkerControl,
+        messages: Vec<Message>,
+        definitions: Vec<ToolDefinition>,
+    ) {
+        self.messages = messages;
+        self.tool_runtime.allowed_tools = Some(Arc::new(
+            definitions
+                .iter()
+                .map(|definition| definition.function.name.clone())
+                .collect(),
+        ));
+        self.tool_defs = definitions;
+        self.native_web_capabilities = NativeWebCapabilities::Disabled;
+        self.tool_runtime.worker_control = Some(control);
+    }
+
     pub fn with_config(client: ModelClient, config: AgentConfig) -> Result<Self> {
         let client = client.with_prompt_cache_key(config.session_id.clone());
         let cwd = config.working_directory.clone();
@@ -393,6 +411,7 @@ impl Agent {
             native_web_capabilities,
             compaction,
             tool_runtime: ToolRuntime {
+                worker_control: None,
                 workspace_cwd: config.workspace_cwd,
                 config_cwd: config.config_cwd,
                 store_path: config.store_path,
@@ -438,49 +457,6 @@ impl Agent {
         provider: Option<Arc<dyn nac_contracts::CommandEnvironmentProvider>>,
     ) {
         self.tool_runtime.command_environment = provider;
-    }
-
-    pub(crate) fn set_worker_web_credential(&mut self, credential: Option<String>) {
-        self.native_web_capabilities
-            .set_worker_credential(credential);
-    }
-
-    /// Build one immutable model-request capability view. The Exa credential
-    /// and the tool names are replaced together before the request and the
-    /// resulting runtime is cloned into exactly that response's tool round.
-    fn refresh_model_request_capabilities(&mut self) -> Result<Vec<ToolDefinition>> {
-        let credential = self.native_web_capabilities.resolve_credential()?;
-        Ok(self.install_model_request_capabilities(credential))
-    }
-
-    fn install_model_request_capabilities(
-        &mut self,
-        credential: Option<String>,
-    ) -> Vec<ToolDefinition> {
-        let credential = credential
-            .filter(|_| self.native_web_capabilities.is_eligible())
-            .map(crate::tools::web::ExaCredential::new)
-            .map(Arc::new);
-        let mut definitions = self.tool_defs.clone();
-        if credential.is_some() {
-            definitions.extend(crate::tools::web::definitions());
-        }
-        self.tool_runtime.allowed_tools = Some(Arc::new(
-            definitions
-                .iter()
-                .map(|definition| definition.function.name.clone())
-                .collect(),
-        ));
-        self.tool_runtime.web_credential = credential;
-        definitions
-    }
-
-    #[cfg(test)]
-    fn model_request_capabilities_for_test(
-        &mut self,
-        credential: Option<&str>,
-    ) -> Vec<ToolDefinition> {
-        self.install_model_request_capabilities(credential.map(str::to_string))
     }
 
     #[cfg(test)]
@@ -676,10 +652,16 @@ impl Agent {
             let delta_sink: DeltaSink<'_> = (self.thread_name.is_none()
                 && self.event_sink.wants_assistant_deltas())
             .then_some(&push_delta);
-            let turn = self
-                .client
-                .send_turn_streaming(provider_view.messages, request_tool_defs, delta_sink)
-                .await;
+            let call = self.client.send_turn_streaming(
+                provider_view.messages,
+                request_tool_defs,
+                delta_sink,
+            );
+            let turn = if let Some(control) = &self.tool_runtime.worker_control {
+                control.bounded("model", call).await
+            } else {
+                call.await
+            };
             // Whatever arrived in the last partial window still belongs on screen.
             deltas.flush();
             let response = match turn {
@@ -703,6 +685,9 @@ impl Agent {
                 .usage
                 .as_ref()
                 .and_then(TokenUsage::valid_provider_context);
+            if let Some(control) = &self.tool_runtime.worker_control {
+                control.record_usage(response.usage.as_ref());
+            }
             if let Some(mut usage) = response.usage.clone() {
                 accumulated_usage.add_cost_saturating(&usage);
                 // Missing, inconsistent, or overflowing provider totals are

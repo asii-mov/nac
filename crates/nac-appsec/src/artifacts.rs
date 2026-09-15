@@ -53,6 +53,10 @@ impl ArtifactStore {
     }
 
     pub fn verify(&self, reference: &ArtifactRef) -> Result<()> {
+        self.verified_file(reference).map(|_| ())
+    }
+
+    fn verified_file(&self, reference: &ArtifactRef) -> Result<cap_std::fs::File> {
         let name = artifact_name(reference)?;
         let mut options = OpenOptions::new();
         options
@@ -81,7 +85,24 @@ impl ArtifactStore {
             format!("{:x}", digest.finalize()) == reference.sha256,
             "evidence hash mismatch"
         );
-        Ok(())
+        Ok(file)
+    }
+
+    pub fn read_range(&self, reference: &ArtifactRef, offset: u64, length: u64) -> Result<Vec<u8>> {
+        use std::io::{Seek, SeekFrom};
+        let mut file = self.verified_file(reference)?;
+        ensure!(
+            offset <= reference.bytes && length <= reference.bytes - offset,
+            "artifact range is outside the verified object"
+        );
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = Vec::new();
+        file.take(length).read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() as u64 == length,
+            "artifact changed during range read"
+        );
+        Ok(bytes)
     }
 }
 

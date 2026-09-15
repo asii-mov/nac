@@ -76,6 +76,8 @@ pub struct TaskPlan {
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research: Option<crate::FrozenResearch>,
     pub repositories: Vec<RepositoryInput>,
     pub declared_inputs: BTreeMap<String, Option<String>>,
     pub monetary_policy: MonetaryPolicy,

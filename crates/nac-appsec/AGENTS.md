@@ -42,7 +42,7 @@ finishes, the next oldest can take its place without an intervening idle poll.
 The controller persists the last identity/time across restarts and rejects a
 changed start time for the same ID. Progress never extends that operation's limit.
 
-The runtime must bound individual operations and each inserted response, while
+The runtime must bound individual operations and each inserted tool response, while
 allowing productive work to continue without token, call-count or total-duration
 ceilings. Usage is cumulative and its completeness flag includes descendants and
 interrupted provider requests. Missing values are unknown, never zero.
@@ -74,11 +74,19 @@ Pinned Git source reads set both `GIT_NO_LAZY_FETCH=1` and an empty
 `GIT_ALLOW_PROTOCOL`. Missing local objects are repairable input failures, not
 permission to fetch from a promisor remote or mutate the source repository.
 
-The production CLI refuses live dispatch because native watchdog integration,
-bounded-operation control and process-tree termination are not yet proved.
+The server consumes this contract through its opt-in, Linux source-only managed
+worker adapter. Frozen campaigns may dispatch; legacy manifests without frozen
+skills and typed briefs remain blocked before admission. The scripted local
+process/MCP/SQLite tests do not establish live native-subscription conformance.
 Native hard-token ceilings are neither supported nor required by the current
 owner policy. The original specification's total-budget requirement is overridden,
-not reported as passing.
+not reported as passing. Controlled experiments remain unsupported.
+
+`brief.rs` renders typed assurance metadata and exact hashes. `skills.rs` resolves
+the versioned registry and transitive resource lock without following paths;
+`retrieval.rs` owns lease-checked pinned source and task-owned artifact ranges.
+Frozen research inputs are additive manifest data. Active campaigns reject drift
+and must not silently re-resolve to a newer skill release.
 
 ## Verification
 
