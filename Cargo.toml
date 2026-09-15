@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/nac-appsec",
     "crates/nac-catalog-gen",
     "crates/nac-contracts",
     "crates/nac-core",

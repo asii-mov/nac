@@ -1613,6 +1613,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nac-appsec"
+version = "0.1.4"
+dependencies = [
+ "anyhow",
+ "cap-std",
+ "libc",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "uuid",
+]
+
+[[package]]
 name = "nac-catalog-gen"
 version = "0.1.0"
 dependencies = [
@@ -1729,6 +1743,7 @@ dependencies = [
  "futures-core",
  "include_dir",
  "libc",
+ "nac-appsec",
  "nac-contracts",
  "nac-core",
  "nac-managed",

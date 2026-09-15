@@ -24,4 +24,5 @@ pub(crate) enum Field<T> {
     Clear,
     Set(T),
 }
+pub(crate) mod appsec;
 pub(crate) mod appsec_doctor;
