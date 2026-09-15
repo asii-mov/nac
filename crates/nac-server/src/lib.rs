@@ -15,7 +15,7 @@ mod mcp_api;
 mod orchestration;
 mod revert;
 
-pub use application::appsec::{run_appsec_doctor, AppsecControl, DoctorError};
+pub use application::appsec::*;
 
 pub(crate) use managed_control::running_target as managed_running_target;
 

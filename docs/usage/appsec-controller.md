@@ -1,10 +1,11 @@
 # Durable application-security controller
 
 This layer persists security campaign inputs, task dependencies, attempts and
-accepted evidence. It does not run a security scan. `appsec run` records a
-blocked campaign and exits with code 3 without dispatching a model. Native
-watchdog integration, bounded-operation control and process-tree termination
-still need independent verification. Offline `appsec doctor` is unchanged.
+accepted evidence. A frozen campaign can run the source-only managed-worker
+adapter described in [source-only runtime](appsec-runtime.md). An unfrozen
+manifest still records a blocked campaign and exits with code 3 without a model
+call. Scripted local adapter conformance is separate from live native-subscription
+conformance, which remains pending. Offline `appsec doctor` is unchanged.
 
 The current owner policy has no token, monetary, total-call or campaign-duration
 ceiling. Tokens are observations only. Productive work may continue; a progress
@@ -122,8 +123,10 @@ content hash, not arbitrary attachment text.
 After the warning interval, the controller requests runtime diagnostics. Only a
 later observation, after diagnostics and the stall interval, can mark a suspected
 stall. A suspected stall stays running; a quiet legitimate operation is not
-declared dead. The runtime integration can invoke `recover` after examining that
-state. Recovery revokes the lease and requests cancellation, preserves evidence,
+declared dead. The runtime watcher prints transition-only notices. An operator can
+invoke revision-checked `appsec recover` after examining that state; see the
+[runtime operator commands](appsec-runtime.md#watch-cancel-and-recover).
+Recovery revokes the lease and requests cancellation, preserves evidence,
 and requires confirmed termination before `resume` can queue another generation.
 New meaningful progress resets the failed-recovery streak, not total attempt count.
 

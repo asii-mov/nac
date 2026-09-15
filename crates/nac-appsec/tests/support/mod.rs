@@ -86,6 +86,7 @@ pub fn manifest(tasks: usize) -> Result<Manifest> {
     .collect();
     Ok(Manifest {
         schema_version: 1,
+        research: None,
         repositories: vec![RepositoryInput {
             identity: "nac-test".into(),
             checkout: Path::new(env!("CARGO_MANIFEST_DIR"))

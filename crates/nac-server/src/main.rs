@@ -492,7 +492,7 @@ async fn run() -> Result<()> {
         Some(RootCommand::CodexAuth(auth)) => run_codex_auth_cli(auth).await,
         Some(RootCommand::ArceeAuth(auth)) => run_arcee_auth_cli(auth).await,
         Some(RootCommand::Upgrade(upgrade)) => run_upgrade_cli(upgrade).await,
-        Some(RootCommand::Appsec(appsec)) => appsec_cli::run(appsec),
+        Some(RootCommand::Appsec(appsec)) => appsec_cli::run(appsec).await,
     }
 }
 

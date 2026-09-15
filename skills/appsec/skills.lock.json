@@ -1,0 +1,58 @@
+{
+  "compatibility": "nac-source-review-v1",
+  "registry_sha256": "7e331717d667980eb99c696d37449fcd09e1c1849883a07e38bce625cd3e80ca",
+  "schema_version": 1,
+  "skills": {
+    "discovery": {
+      "dependencies": [
+        "evidence"
+      ],
+      "entry": "skills/discovery/SKILL.md",
+      "files": {
+        "skills/discovery/SKILL.md": "5e9984dd34a6b228dc8394fa52d537241ba9fcd124a0b6459ba47d55cd52b99c"
+      },
+      "stages": [
+        "discovery"
+      ],
+      "version": "1.0.0"
+    },
+    "evidence": {
+      "dependencies": [],
+      "entry": "skills/evidence/SKILL.md",
+      "files": {
+        "skills/evidence/SKILL.md": "81b107b99bf209b78243c97fd2c9ee2eeac266d0655a28648b9f013a35122214",
+        "skills/evidence/references/receipt.md": "e7d37ab2d271d61e3c75338388d1aee395f26eed24b500e8d56020b3ba647a41"
+      },
+      "stages": [
+        "*"
+      ],
+      "version": "1.0.0"
+    },
+    "recon": {
+      "dependencies": [
+        "evidence"
+      ],
+      "entry": "skills/recon/SKILL.md",
+      "files": {
+        "skills/recon/SKILL.md": "fe0d5f3d410e5cb1cefa5904e6b92782250588a35abb09b0edc7f37f422768cf"
+      },
+      "stages": [
+        "recon"
+      ],
+      "version": "1.0.0"
+    },
+    "validation": {
+      "dependencies": [
+        "evidence"
+      ],
+      "entry": "skills/validation/SKILL.md",
+      "files": {
+        "skills/validation/SKILL.md": "58913a73df2f656e374fc6a5c60a074fb27292848e16d16f36a8881756a58dc9"
+      },
+      "stages": [
+        "validation"
+      ],
+      "version": "1.0.0"
+    }
+  }
+}

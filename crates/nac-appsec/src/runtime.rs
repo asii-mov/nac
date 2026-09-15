@@ -2,7 +2,7 @@ use crate::{
     ArtifactRef, Id, Lease, OperationLimits, RepositoryInput, Result, RuntimeOperation, Usage,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Assignment {
     pub lease: Lease,
     pub scope: String,
@@ -11,6 +11,7 @@ pub struct Assignment {
     pub handoff: Option<String>,
     pub limits: OperationLimits,
     pub deadline_ms: u64,
+    pub research: Option<crate::PreparedResearch>,
 }
 
 pub enum RuntimeObservation {

@@ -161,6 +161,12 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     handoff: task.handoff.clone(),
                     limits: task.plan.operation_limits,
                     deadline_ms,
+                    research: campaign
+                        .manifest
+                        .research
+                        .as_ref()
+                        .map(|research| research.prepare(&task.plan.key))
+                        .transpose()?,
                 });
                 Ok(())
             })?;
