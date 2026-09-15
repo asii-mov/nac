@@ -51,6 +51,7 @@ and [generated API contract](docs/architecture/0002-generated-api-contract.md).
 | Native tools, capability composition, invocation | `nac-core::tools` | `crates/nac-core/src/tools/AGENTS.md` |
 | Model/runtime/backend construction | `nac-core::runtime` | `crates/nac-core/src/runtime/` |
 | Managed secrets, GitHub, clone workflow, readiness | `nac-managed` | `crates/nac-managed/AGENTS.md` |
+| Security campaign control, evidence and admission | `nac-appsec` | `crates/nac-appsec/AGENTS.md` |
 | Product use cases and HTTP/OpenAPI/MCP delivery | `nac-server` | `crates/nac-server/AGENTS.md` |
 | React features, queries, presentation | web client | `crates/nac-server/web/AGENTS.md` |
 | Managed image/runtime contract | managed container | `docker/managed/AGENTS.md` |
@@ -90,6 +91,7 @@ or concurrency seam. Add characterization coverage with the change.
 - `crates/nac-core/` — durable harness, model/runtime loop, tools, permissions,
   sessions, persistence, workspace and execution backends.
 - `crates/nac-managed/` — harness-independent managed-host bounded context.
+- `crates/nac-appsec/` — runtime-neutral durable security campaign control.
 - `crates/nac-server/` — application composition plus HTTP/OpenAPI/MCP delivery
   and the `nac-web` binary.
 - `crates/nac-server/web/` — React/Vite client and production-embedded E2E.
