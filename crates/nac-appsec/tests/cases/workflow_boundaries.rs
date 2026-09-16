@@ -255,6 +255,7 @@ fn material_unknowns_cannot_be_terminal_verdicts_but_inconclusive_can_resume() -
         prerequisites: vec!["REQUIRED deployment configuration".into()],
         unresolved_assumptions: vec!["required configuration absent".into()],
         source: source.clone(),
+        experiments: vec![],
     };
     let accepted = controller.submit(
         &discovery.lease,
@@ -277,6 +278,7 @@ fn material_unknowns_cannot_be_terminal_verdicts_but_inconclusive_can_resume() -
         counterevidence: vec![source],
         unknowns: vec!["REQUIRED deployment configuration remains absent".into()],
         next_actions: vec!["supply the pinned deployment configuration".into()],
+        experiments: vec![],
     };
     for (key, outcome) in [
         ("supported", ValidationOutcome::Supported),
@@ -339,6 +341,7 @@ fn material_unknowns_cannot_be_terminal_verdicts_but_inconclusive_can_resume() -
                 counterevidence: vec![source],
                 unknowns: vec![],
                 next_actions: vec![],
+                experiments: vec![],
             },
         },
     )?;

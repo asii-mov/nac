@@ -13,13 +13,13 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1] / "skills" / "appsec"
     skills = {}
-    for name in ["evidence", "recon", "discovery", "validation", "synthesis"]:
+    for name in ["evidence", "recon", "discovery", "validation", "synthesis", "controlled-experiment"]:
         files = sorted((root / "skills" / name).rglob("*"))
         if any(path.is_symlink() for path in files):
             raise SystemExit("skill resources must not be symlinks")
         skills[name] = {
             "version": "1.0.0",
-            "stages": ["*"] if name == "evidence" else [name],
+            "stages": ["*"] if name == "evidence" else (["discovery", "validation"] if name == "controlled-experiment" else [name]),
             "entry": f"skills/{name}/SKILL.md",
             "dependencies": [] if name == "evidence" else ["evidence"],
             "files": {

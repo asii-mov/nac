@@ -8,6 +8,10 @@ pub use super::appsec_doctor::{run_appsec_doctor, DoctorError};
 pub use super::appsec_runtime::{
     run_appsec_worker, supervise_appsec_worker, NacWorkerRuntime, NativeResearchModel,
 };
+pub use super::appsec_target::{
+    AppsecTargetRunner, BuildDiagnosticProjection, BuildOutputStream, FrozenPilot,
+    LocalPilotArtifacts, LocalPilotPreparation,
+};
 
 pub struct AppsecControl {
     controller: Controller<SqliteRepository>,
@@ -24,7 +28,38 @@ impl AppsecControl {
         })
     }
 
+    pub fn open_with_target_capacity(state: &Path, target_capacity: u32) -> Result<Self> {
+        let repository = SqliteRepository::open_with_target_capacity(state, 4, target_capacity)?;
+        let artifacts = ArtifactStore::open(state)?;
+        Ok(Self {
+            controller: Controller::new(repository, artifacts, SystemClock),
+            state: state.to_path_buf(),
+        })
+    }
+
     pub fn run(&self, manifest: Manifest) -> Result<Campaign> {
+        if let Some(profile) = &manifest.experiments {
+            let root = self.state.join("packages");
+            use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+            match std::fs::DirBuilder::new().mode(0o700).create(&root) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
+            }
+            let metadata = std::fs::symlink_metadata(&root)?;
+            anyhow::ensure!(
+                metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0,
+                "package root must be an owner-only real directory"
+            );
+            let destination = root.join(&profile.package.manifest_sha256);
+            if destination.exists() {
+                profile.package.verify_export(&destination)?;
+            } else {
+                profile
+                    .package
+                    .export(&manifest.repositories, &destination)?;
+            }
+        }
         let mut runtime = super::appsec_runtime::NacWorkerRuntime::new(
             &self.state,
             std::env::current_exe()?,
@@ -56,12 +91,7 @@ impl AppsecControl {
 
     pub fn tick(&self, run: Id, runtime: &mut impl Runtime) -> Result<Campaign> {
         let campaign = self.controller.reconcile(run, runtime)?;
-        let occupied = campaign
-            .tasks
-            .iter()
-            .flat_map(|task| &task.attempts)
-            .filter(|attempt| attempt.runtime_slot_held)
-            .count();
+        let occupied = campaign.occupied_attempts();
         let queued = campaign
             .tasks
             .iter()
@@ -76,6 +106,45 @@ impl AppsecControl {
 
     pub fn status(&self, run: Id) -> Result<Campaign> {
         self.controller.status(run)
+    }
+
+    pub fn cancel_experiment(&self, run: Id, experiment_id: Id) -> Result<nac_appsec::Experiment> {
+        let campaign = self.controller.status(run)?;
+        let experiment = campaign
+            .experiments
+            .iter()
+            .find(|experiment| experiment.id == experiment_id)
+            .context("experiment unavailable")?;
+        let lease = campaign
+            .tasks
+            .iter()
+            .find(|task| task.id == experiment.task_id)
+            .and_then(|task| task.attempts.last())
+            .map(|attempt| attempt.lease.clone())
+            .context("experiment owner unavailable")?;
+        self.controller.cancel_experiment(&lease, experiment_id)
+    }
+
+    pub fn recover_experiment(&self, run: Id, experiment_id: Id) -> Result<nac_appsec::Experiment> {
+        let campaign = self.controller.status(run)?;
+        let experiment = campaign
+            .experiments
+            .iter()
+            .find(|experiment| experiment.id == experiment_id)
+            .context("experiment unavailable")?;
+        let lease = campaign
+            .tasks
+            .iter()
+            .find(|task| task.id == experiment.task_id)
+            .and_then(|task| task.attempts.last())
+            .map(|attempt| attempt.lease.clone())
+            .context("experiment owner unavailable")?;
+        self.controller.recover_experiment(&lease, experiment_id)
+    }
+
+    pub fn reconcile_experiments(&self, run: Id) -> Result<Campaign> {
+        self.controller
+            .reconcile_experiments(run, &mut AppsecTargetRunner::new(&self.state)?)
     }
 
     pub fn cancel(&self, run: Id, revision: u64) -> Result<Campaign> {
@@ -100,9 +169,16 @@ impl AppsecControl {
             return Err(error)
                 .context("canonical cancellation recorded; runtime cleanup remains uncertain");
         }
-        self.controller
+        let campaign = self
+            .controller
             .reconcile(run, &mut runtime)
-            .context("canonical cancellation recorded; runtime cleanup remains uncertain")
+            .context("canonical cancellation recorded; runtime cleanup remains uncertain")?;
+        if campaign.occupied_targets() > 0 {
+            self.controller
+                .reconcile_experiments(run, &mut AppsecTargetRunner::new(&self.state)?)
+        } else {
+            Ok(campaign)
+        }
     }
 
     pub fn recover(

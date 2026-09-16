@@ -78,6 +78,7 @@ fn distinct_allegations_on_the_same_source_line_each_get_one_validator() -> Resu
         prerequisites: vec!["attacker controls handler arguments".into()],
         unresolved_assumptions: vec!["caller argument validation is unknown".into()],
         source,
+        experiments: vec![],
     };
     let submission = |candidate: Candidate| Submission {
         schema_version: 1,

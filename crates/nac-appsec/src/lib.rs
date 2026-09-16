@@ -1,6 +1,10 @@
 mod artifacts;
 mod brief;
 mod controller;
+mod dependencies;
+mod experiment_records;
+mod experiments;
+mod package;
 mod records;
 mod repository;
 mod retrieval;
@@ -16,10 +20,14 @@ mod workflow_records;
 pub use artifacts::ArtifactStore;
 pub use brief::{Assurance, RenderedBrief, ResearchBrief};
 pub use controller::Controller;
+pub use dependencies::{DependencyRead, PrefetchedDependency};
+pub use experiment_records::*;
+pub use package::{PackageFile, SourcePackage};
 pub use records::*;
 pub use repository::{Repository, SqliteRepository};
 pub use retrieval::{
-    InventoryEnumeration, InventoryReceipt, SourceFiles, SourceInventory, SourceRead, SourceReceipt,
+    DependencySourceRead, InventoryEnumeration, InventoryReceipt, SourceFiles, SourceInventory,
+    SourceRead, SourceReceipt,
 };
 pub use runtime::{Assignment, Runtime, RuntimeExit, RuntimeObservation};
 pub use skills::{FrozenResearch, FrozenSkill, LockedSkill, PreparedResearch, SkillLock};

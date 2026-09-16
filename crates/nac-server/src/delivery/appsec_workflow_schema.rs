@@ -45,8 +45,10 @@ pub(super) fn submission(evidence: Value) -> Value {
     let followup = object(
         json!({"area":text,"attack_class":class,"family":text,"rationale":text,"evidence":sources}),
     );
+    let experiment_ids =
+        json!({"type":"array","maxItems":8,"items":{"type":"string","format":"uuid"}});
     let validation = object(
-        json!({"outcome":{"enum":["supported","disproved","inconclusive"]},"prerequisites":text,"reachability":text,"security_violation":text,"sources":sources,"counterevidence":sources,"unknowns":{"type":"array","items":text,"description":"Material unresolved prerequisites for this verdict. Must be empty for supported or disproved; unrelated manifest-level unknown context stays in the manifest."},"next_actions":texts}),
+        json!({"outcome":{"enum":["supported","disproved","inconclusive"]},"prerequisites":text,"reachability":text,"security_violation":text,"sources":sources,"counterevidence":sources,"unknowns":{"type":"array","items":text,"description":"Material unresolved prerequisites for this verdict. Must be empty for supported or disproved; unrelated manifest-level unknown context stays in the manifest."},"next_actions":texts,"experiments":experiment_ids}),
     );
     let synthesis = object(
         json!({"assumptions":texts,"counterevidence":sources,"gaps":texts,"next":array(&followup),"finish":{"type":"boolean"}}),

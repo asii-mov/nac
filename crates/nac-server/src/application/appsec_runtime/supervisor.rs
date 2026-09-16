@@ -166,10 +166,11 @@ pub async fn supervise_appsec_worker(directory: &Path) -> Result<()> {
                             && proof.backend == expected_backend,
                         "worker loaded an unexpected model route"
                     );
-                    let expected_tools: std::collections::BTreeSet<_> = tools::TOOL_NAMES
-                        .iter()
-                        .map(|name| format!("mcp__controller__{name}"))
-                        .collect();
+                    let expected_tools: std::collections::BTreeSet<_> =
+                        tools::tool_names(launch.assignment.experiment_tools)
+                            .iter()
+                            .map(|name| format!("mcp__controller__{name}"))
+                            .collect();
                     ensure!(
                         proof
                             .tools

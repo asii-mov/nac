@@ -1,8 +1,11 @@
 use std::{path::PathBuf, process};
 
 use clap::{Args, Subcommand};
-use nac_appsec::{Campaign, Id, Manifest};
-use nac_server::{run_appsec_doctor, AppsecControl, DoctorError};
+use nac_appsec::{Campaign, ExperimentProfile, HttpInterface, Id, Manifest, OracleClass};
+use nac_server::{
+    run_appsec_doctor, AppsecControl, AppsecTargetRunner, DoctorError, FrozenPilot,
+    LocalPilotPreparation,
+};
 
 #[derive(Args)]
 pub(super) struct AppsecCli {
@@ -31,6 +34,8 @@ enum AppsecCommand {
         output: PathBuf,
         #[arg(long)]
         workflow: bool,
+        #[arg(long)]
+        experiment_profile: Option<PathBuf>,
     },
     /// Reconcile and drive admitted source-only workers until stopped
     Watch {
@@ -46,12 +51,33 @@ enum AppsecCommand {
         #[arg(long, value_name = "NEW_DIRECTORY")]
         output: PathBuf,
     },
-    /// Persist a frozen campaign and admit a native source-only worker
+    /// Build reviewed local pilot images and emit a public profile plus private registry
+    PrepareLocalPilot {
+        #[arg(long)]
+        repository: PathBuf,
+        #[arg(long)]
+        commit: String,
+        #[arg(long, default_value = "local-pilot")]
+        repository_id: String,
+        #[arg(long = "include", required = true)]
+        includes: Vec<String>,
+        #[arg(long)]
+        interface: PathBuf,
+        #[arg(long, value_parser = ["authorization", "rce-nonce"])]
+        oracle: String,
+        #[arg(long, value_name = "NEW_DIRECTORY")]
+        output: PathBuf,
+    },
+    /// Persist a frozen campaign and admit a native worker
     Run {
         #[arg(long)]
         manifest: PathBuf,
         #[arg(long)]
         state: PathBuf,
+        #[arg(long)]
+        experiment_registry: Option<PathBuf>,
+        #[arg(long)]
+        target_capacity: Option<u32>,
     },
     /// Inspect canonical controller state and verified evidence
     Status {
@@ -102,6 +128,47 @@ enum AppsecCommand {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Read one task-safe experiment projection from canonical state
+    ExperimentRead {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        run_id: Id,
+        #[arg(long)]
+        experiment_id: Id,
+    },
+    /// Commit an experiment stop tombstone using the owning task lease
+    ExperimentCancel {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        run_id: Id,
+        #[arg(long)]
+        experiment_id: Id,
+    },
+    /// Clear bounded experiment adapter recovery state after reviewing diagnostics
+    ExperimentRecover {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        run_id: Id,
+        #[arg(long)]
+        experiment_id: Id,
+    },
+    /// Reconcile frozen experiment desired state with the private Docker adapter once
+    ExperimentReconcile {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        run_id: Id,
+    },
+    /// Drive only locally authored pilot experiments until cleanup is confirmed
+    ExperimentDemo {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        run_id: Id,
+    },
 }
 
 pub(super) async fn run(cli: AppsecCli) -> anyhow::Result<()> {
@@ -117,6 +184,7 @@ pub(super) async fn run(cli: AppsecCli) -> anyhow::Result<()> {
             brief,
             output,
             workflow,
+            experiment_profile,
         } => {
             let mut manifest: Manifest = serde_json::from_slice(&std::fs::read(manifest)?)?;
             let brief = serde_json::from_slice(&std::fs::read(brief)?)?;
@@ -134,10 +202,20 @@ pub(super) async fn run(cli: AppsecCli) -> anyhow::Result<()> {
                     )
                 })
                 .collect();
+            let profile = match experiment_profile {
+                Some(path) => Some(serde_json::from_slice::<ExperimentProfile>(
+                    &std::fs::read(path)?,
+                )?),
+                None => None,
+            };
             let mut research = nac_appsec::FrozenResearch::resolve(&skills, brief, stages)?;
             research.workflow = workflow;
+            if profile.is_some() {
+                research.enable_controlled_experiments()?;
+            }
             research.verify()?;
             manifest.research = Some(research);
+            manifest.experiments = profile;
             write_report(&output, &serde_json::to_vec_pretty(&manifest)?)?;
         }
         AppsecCommand::Watch { state, run_id } => {
@@ -155,9 +233,61 @@ pub(super) async fn run(cli: AppsecCli) -> anyhow::Result<()> {
             }
             Err(error) => return Err(error.into()),
         },
-        AppsecCommand::Run { manifest, state } => {
+        AppsecCommand::PrepareLocalPilot {
+            repository,
+            commit,
+            repository_id,
+            includes,
+            interface,
+            oracle,
+            output,
+        } => {
+            let repository = std::fs::canonicalize(repository)?;
+            let interface: HttpInterface = serde_json::from_slice(&std::fs::read(interface)?)?;
+            let oracle_class = match oracle.as_str() {
+                "authorization" => OracleClass::Authorization,
+                "rce-nonce" => OracleClass::RceNonce,
+                _ => unreachable!("clap validates local pilot oracle"),
+            };
+            let output = if output.is_absolute() {
+                output
+            } else {
+                std::env::current_dir()?.join(output)
+            };
+            let artifacts = AppsecTargetRunner::prepare_local_pilot(LocalPilotPreparation {
+                repository,
+                commit,
+                repository_id,
+                includes,
+                interface,
+                oracle_class,
+                output,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&artifacts)?);
+        }
+        AppsecCommand::Run {
+            manifest,
+            state,
+            experiment_registry,
+            target_capacity,
+        } => {
             let manifest: Manifest = serde_json::from_slice(&std::fs::read(manifest)?)?;
-            let campaign = AppsecControl::open(&state)?.run(manifest)?;
+            let control = match (&manifest.experiments, experiment_registry, target_capacity) {
+                (Some(profile), Some(registry), Some(capacity)) => {
+                    let pilots: Vec<FrozenPilot> =
+                        serde_json::from_slice(&std::fs::read(registry)?)?;
+                    AppsecTargetRunner::freeze_registry(&state, &profile.recipes, pilots)?;
+                    AppsecControl::open_with_target_capacity(&state, capacity)?
+                }
+                (None, None, None) => AppsecControl::open(&state)?,
+                (Some(_), _, _) => anyhow::bail!(
+                    "experiment campaigns require a private registry and finite target capacity"
+                ),
+                (None, _, _) => {
+                    anyhow::bail!("source-only campaigns do not accept experiment adapter options")
+                }
+            };
+            let campaign = control.run(manifest)?;
             print_status(&campaign)?;
             if campaign.dispatch_blocker.is_some() {
                 eprintln!("Campaign persisted; freeze the selected skills and typed brief before dispatch. No model executed.");
@@ -213,6 +343,61 @@ pub(super) async fn run(cli: AppsecCli) -> anyhow::Result<()> {
             )?;
             write_report(&output.join("report.md"), campaign.markdown().as_bytes())?;
         }
+        AppsecCommand::ExperimentRead {
+            state,
+            run_id,
+            experiment_id,
+        } => {
+            let campaign = AppsecControl::open(&state)?.status(run_id)?;
+            let experiment = campaign
+                .experiments
+                .iter()
+                .find(|experiment| experiment.id == experiment_id)
+                .ok_or_else(|| anyhow::anyhow!("experiment unavailable"))?;
+            println!("{}", serde_json::to_string_pretty(experiment)?);
+        }
+        AppsecCommand::ExperimentCancel {
+            state,
+            run_id,
+            experiment_id,
+        } => {
+            let control = AppsecControl::open(&state)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&control.cancel_experiment(run_id, experiment_id)?)?
+            );
+        }
+        AppsecCommand::ExperimentRecover {
+            state,
+            run_id,
+            experiment_id,
+        } => {
+            let control = AppsecControl::open(&state)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&control.recover_experiment(run_id, experiment_id)?)?
+            );
+        }
+        AppsecCommand::ExperimentReconcile { state, run_id } => {
+            print_status(&AppsecControl::open(&state)?.reconcile_experiments(run_id)?)?;
+        }
+        AppsecCommand::ExperimentDemo { state, run_id } => {
+            let control = AppsecControl::open(&state)?;
+            loop {
+                let campaign = control.reconcile_experiments(run_id)?;
+                if campaign.occupied_targets() == 0
+                    || campaign.experiments.iter().all(|experiment| {
+                        experiment
+                            .trials
+                            .iter()
+                            .all(|trial| !trial.holds_target() || trial.operator_recovery_required)
+                    })
+                {
+                    print_status(&campaign)?;
+                    break;
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -227,7 +412,18 @@ async fn watch(state: PathBuf, run_id: Id) -> anyhow::Result<()> {
     let mut last_error = None;
     let mut watchdog_states = std::collections::BTreeMap::new();
     loop {
-        let campaign = match control.tick(run_id, &mut runtime) {
+        let campaign = match control.tick(run_id, &mut runtime).and_then(|campaign| {
+            if campaign.experiments.iter().any(|experiment| {
+                experiment
+                    .trials
+                    .iter()
+                    .any(nac_appsec::ExperimentTrial::holds_target)
+            }) {
+                control.reconcile_experiments(run_id)
+            } else {
+                Ok(campaign)
+            }
+        }) {
             Ok(campaign) => {
                 last_error = None;
                 campaign
@@ -270,11 +466,7 @@ async fn watch(state: PathBuf, run_id: Id) -> anyhow::Result<()> {
                 );
             }
         }
-        let occupied = campaign.tasks.iter().any(|task| {
-            task.attempts
-                .iter()
-                .any(|attempt| attempt.runtime_slot_held)
-        });
+        let occupied = campaign.occupied_attempts() > 0;
         let queued = campaign.tasks.iter().any(|task| {
             task.state == nac_appsec::ExecutionState::Queued
                 && task.plan.dependencies.iter().all(|key| {

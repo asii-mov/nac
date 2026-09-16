@@ -9,8 +9,9 @@ ambient NAC skill discovery. Active campaigns reject edits rather than absorbing
 {"recon":["recon"],"discovery":["discovery"],"validation":["validation"],"synthesis":["synthesis"]}
 ```
 
-This release supports source-only review. Reproduction, remediation, arbitrary
-experiments, deployment verification and external retrieval are unsupported. A
+This release supports source-only review and an opt-in frozen controlled-experiment
+profile for discovery and validation. Arbitrary execution, remediation, deployment
+verification and external retrieval are unsupported. A
 validation task checks source claims; it cannot certify a working exploit. Select
 one stage per task. Native delegation is disabled; all investigators need controller
 admission. No skill can authorize a tool, change a fence, accept a finding or certify

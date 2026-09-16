@@ -35,7 +35,7 @@ impl<R: Repository, C: Clock> Controller<R, C> {
             bytes <= output_limit,
             "submission exceeds per-response output limit"
         );
-        match &submission.payload {
+        let candidate_state = match &submission.payload {
             Payload::Candidate { candidate } => {
                 ensure!(
                     !candidate.claim.trim().is_empty(),
@@ -46,29 +46,43 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     "candidate requires evidence"
                 );
                 validate_source(&snapshot.manifest, &candidate.source)?;
+                if candidate.experiments.is_empty() {
+                    EvidenceState::Candidate
+                } else {
+                    crate::experiments::validate_linked_experiments(
+                        &snapshot,
+                        lease.task_id,
+                        &candidate.experiments,
+                        &candidate.claim,
+                        &candidate.source,
+                    )?
+                }
             }
-            Payload::StageResult { result } => match result {
-                StageResult::Completed { scope } => {
-                    ensure!(
-                        scope == &task.plan.scope,
-                        "completion must cover the declared task scope"
-                    );
-                    ensure!(
-                        !submission.evidence.is_empty(),
-                        "completion requires structured evidence, not final prose"
-                    );
+            Payload::StageResult { result } => {
+                match result {
+                    StageResult::Completed { scope } => {
+                        ensure!(
+                            scope == &task.plan.scope,
+                            "completion must cover the declared task scope"
+                        );
+                        ensure!(
+                            !submission.evidence.is_empty(),
+                            "completion requires structured evidence, not final prose"
+                        );
+                    }
+                    StageResult::Partial { reason }
+                    | StageResult::Blocked { reason }
+                    | StageResult::Failed { reason } => {
+                        ensure!(
+                            !reason.trim().is_empty(),
+                            "unfinished scope requires a reason"
+                        );
+                    }
                 }
-                StageResult::Partial { reason }
-                | StageResult::Blocked { reason }
-                | StageResult::Failed { reason } => {
-                    ensure!(
-                        !reason.trim().is_empty(),
-                        "unfinished scope requires a reason"
-                    );
-                }
-            },
-            Payload::Workflow { .. } => {}
-        }
+                EvidenceState::Candidate
+            }
+            Payload::Workflow { .. } => EvidenceState::Candidate,
+        };
         crate::workflow_admission::authorize(&snapshot, lease.task_id, &submission.payload)?;
         let evidence = submission
             .evidence
@@ -248,7 +262,7 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     accepted_ms: now,
                     payload: submission.payload.clone(),
                     evidence: evidence.clone(),
-                    evidence_state: candidate.then_some(EvidenceState::Candidate),
+                    evidence_state: candidate.then_some(candidate_state),
                     remediation_state: candidate.then_some(RemediationState::NotStarted),
                 };
                 crate::workflow_admission::apply(campaign, lease, &record)?;

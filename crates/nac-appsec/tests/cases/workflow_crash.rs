@@ -114,6 +114,7 @@ fn real_process_death_cannot_duplicate_children_or_validators() -> Result<()> {
                             prerequisites: vec!["attacker control".into()],
                             unresolved_assumptions: vec![],
                             source,
+                            experiments: vec![],
                         },
                     },
                     evidence: vec![EvidenceInput::Upload {

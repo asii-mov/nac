@@ -12,6 +12,8 @@ pub struct Assignment {
     pub limits: OperationLimits,
     pub deadline_ms: u64,
     pub research: Option<crate::PreparedResearch>,
+    #[serde(default)]
+    pub experiment_tools: bool,
 }
 
 pub enum RuntimeObservation {

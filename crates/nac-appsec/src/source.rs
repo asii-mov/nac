@@ -8,8 +8,19 @@ use std::{
 
 pub(crate) fn validate_manifest(manifest: &Manifest) -> Result<()> {
     crate::require_version(manifest.schema_version)?;
+    if let Some(profile) = &manifest.experiments {
+        profile.verify(&manifest.repositories)?;
+        ensure!(
+            manifest.research.is_some(),
+            "controlled experiments require frozen research inputs"
+        );
+    }
     if let Some(research) = &manifest.research {
         research.verify()?;
+        ensure!(
+            manifest.experiments.is_some() == research.controlled_experiments,
+            "controlled experiment skills and profile must be frozen together"
+        );
         ensure!(
             research.stages.len() == manifest.tasks.len()
                 && manifest
@@ -119,6 +130,7 @@ pub(crate) fn validate_manifest(manifest: &Manifest) -> Result<()> {
 }
 
 pub(crate) fn validate_source(manifest: &Manifest, source: &SourceRef) -> Result<()> {
+    crate::package::require_member(manifest, &source.repository, &source.path)?;
     let repo = manifest
         .repositories
         .iter()

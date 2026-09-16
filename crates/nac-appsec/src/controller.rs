@@ -45,6 +45,7 @@ impl<R: Repository, C: Clock> Controller<R, C> {
             dispatch_blocker: None,
             accepted: vec![],
             pending_submissions: vec![],
+            experiments: vec![],
             workflow: None,
         };
         campaign.workflow = Workflow::initialize(&campaign)?;
@@ -137,7 +138,7 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                         .map(|research| research.prepare(&campaign.tasks[index].plan.key))
                         .transpose()
                 };
-                let prepared = match prepared {
+                let mut prepared = match prepared {
                     Ok(prepared) => prepared,
                     Err(error) => {
                         let reason = format!("frozen research input unavailable: {error}");
@@ -147,6 +148,33 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                         return Ok(());
                     }
                 };
+                let experiment_role = campaign
+                    .workflow
+                    .as_ref()
+                    .and_then(|workflow| workflow.jobs.get(&campaign.tasks[index].id))
+                    .map(|job| job.role)
+                    .or_else(|| {
+                        let research = campaign.manifest.research.as_ref()?;
+                        match research
+                            .stages
+                            .get(&campaign.tasks[index].plan.key)?
+                            .as_str()
+                        {
+                            "discovery" => Some(ResearchRole::Discovery),
+                            "validation" => Some(ResearchRole::Validation),
+                            _ => None,
+                        }
+                    });
+                if matches!(
+                    experiment_role,
+                    Some(ResearchRole::Discovery | ResearchRole::Validation)
+                ) {
+                    if let (Some(prepared), Some(profile)) =
+                        (&mut prepared, &campaign.manifest.experiments)
+                    {
+                        prepared.add_experiments(profile)?;
+                    }
+                }
                 let task = &mut campaign.tasks[index];
                 ensure!(
                     task.failed_recoveries < campaign.manifest.watchdog.max_failed_recoveries,
@@ -208,6 +236,11 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     limits: task.plan.operation_limits,
                     deadline_ms,
                     research: prepared,
+                    experiment_tools: campaign.manifest.experiments.is_some()
+                        && matches!(
+                            experiment_role,
+                            Some(ResearchRole::Discovery | ResearchRole::Validation)
+                        ),
                 });
                 Ok(())
             })?;
@@ -267,6 +300,17 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     .as_ref()
                     .and_then(|workflow| workflow.latest_validation(campaign, task_id))
                     .is_some_and(|v| !v.is_resolved());
+                ensure!(
+                    campaign
+                        .tasks
+                        .iter()
+                        .find(|task| task.id == task_id)
+                        .is_some_and(|task| !task
+                            .attempts
+                            .iter()
+                            .any(|attempt| campaign.attempt_occupied(attempt))),
+                    "termination must be reconciled before resume"
+                );
                 let task = campaign
                     .tasks
                     .iter_mut()

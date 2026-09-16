@@ -112,6 +112,53 @@ impl Workflow {
             })
     }
 
+    pub(crate) fn finding_evidence_state(
+        &self,
+        campaign: &Campaign,
+        candidate_id: Id,
+    ) -> EvidenceState {
+        let Some(candidate_record) = campaign.accepted.iter().find(|accepted| {
+            accepted.id == candidate_id && matches!(accepted.payload, Payload::Candidate { .. })
+        }) else {
+            return EvidenceState::Inconclusive;
+        };
+        let Payload::Candidate { candidate } = &candidate_record.payload else {
+            unreachable!()
+        };
+        let Some(validation) = self.latest_validation(
+            campaign,
+            self.candidate_validators
+                .get(&candidate_id)
+                .copied()
+                .unwrap_or(candidate_record.task_id),
+        ) else {
+            return candidate_record
+                .evidence_state
+                .unwrap_or(EvidenceState::Candidate);
+        };
+        let candidate_state = candidate_record
+            .evidence_state
+            .unwrap_or(EvidenceState::Candidate);
+        match validation.outcome {
+            ValidationOutcome::Inconclusive => EvidenceState::Inconclusive,
+            ValidationOutcome::Disproved if candidate_state == EvidenceState::Reproduced => {
+                EvidenceState::Inconclusive
+            }
+            ValidationOutcome::Disproved => EvidenceState::Disproved,
+            ValidationOutcome::Supported if !validation.experiments.is_empty() => {
+                crate::experiments::validate_linked_experiments(
+                    campaign,
+                    self.candidate_validators[&candidate_id],
+                    &validation.experiments,
+                    &candidate.claim,
+                    &candidate.source,
+                )
+                .unwrap_or(EvidenceState::Inconclusive)
+            }
+            ValidationOutcome::Supported => EvidenceState::StaticSupported,
+        }
+    }
+
     pub(crate) fn markdown(&self, campaign: &Campaign) -> String {
         let completed = |baseline| {
             self.cells
@@ -126,7 +173,12 @@ impl Workflow {
                 .count()
         };
         let baseline = self.cells.iter().filter(|cell| cell.baseline).count();
-        let mut report = format!("\n## Persisted investigation workflow\n\nBaseline completed/planned: {}/{}. Additional proposed/completed: {}/{}. Synthesis rounds: {}. Source-operation active research: {} ms (conservative lower bound; model-thinking intervals unknown). Scope completion is not security assurance. Controlled experiments, reproduction, remediation and evaluation remain unsupported.\n\n", completed(true), baseline, self.cells.len() - baseline, completed(false), self.rounds.len(), self.effort.credited_ms());
+        let experiments = if campaign.manifest.experiments.is_some() {
+            "Only frozen controller-run experiments are supported for discovery and validation. Results do not establish original-target reproduction, remediation or security assurance."
+        } else {
+            "Controlled experiments, reproduction, remediation and evaluation remain unsupported."
+        };
+        let mut report = format!("\n## Persisted investigation workflow\n\nBaseline completed/planned: {}/{}. Additional proposed/completed: {}/{}. Synthesis rounds: {}. Source-operation active research: {} ms (conservative lower bound; model-thinking intervals unknown). Scope completion is not security assurance. {experiments}\n\n", completed(true), baseline, self.cells.len() - baseline, completed(false), self.rounds.len(), self.effort.credited_ms());
         for state in [
             ExecutionState::Partial,
             ExecutionState::Blocked,
@@ -139,7 +191,7 @@ impl Workflow {
         }
         for accepted in &campaign.accepted {
             if let Payload::Candidate { candidate } = &accepted.payload {
-                report.push_str(&format!("\nCandidate {}: {}. Source: {}@{}:{}:{}-{}. Prerequisites: {:?}. Original unresolved assumptions: {:?}.\n", accepted.id, candidate.claim, candidate.source.repository, candidate.source.commit, candidate.source.path, candidate.source.start_line, candidate.source.end_line, candidate.prerequisites, candidate.unresolved_assumptions));
+                report.push_str(&format!("\nCandidate {}: {}. Source: {}@{}:{}:{}-{}. Prerequisites: {:?}. Original unresolved assumptions: {:?}. Linked experiments: {}. Evidence state: {:?}.\n", accepted.id, candidate.claim, candidate.source.repository, candidate.source.commit, candidate.source.path, candidate.source.start_line, candidate.source.end_line, candidate.prerequisites, candidate.unresolved_assumptions, candidate.experiments.len(), self.finding_evidence_state(campaign, accepted.id)));
             }
             if let Payload::Workflow {
                 action: WorkflowAction::Validate { validation },
@@ -154,7 +206,7 @@ impl Workflow {
                         .values()
                         .any(|i| models.contains(&&i.model))
                 });
-                report.push_str(&format!("\nCandidate {:?}: {:?}, source review only, not reproduced. Resolution: {}. Model diversity: {}. Material unknowns: {:?}. Next actions: {:?}.\n", job.candidate, validation.outcome, if validation.is_resolved() { "resolved" } else { "unresolved" }, if same { "same-model/reduced diversity" } else { "unknown; fresh context is not proof of independence" }, validation.unknowns, validation.next_actions));
+                report.push_str(&format!("\nCandidate {:?}: {:?}. Linked experiments: {}. Resolution: {}. Model diversity: {}. Material unknowns: {:?}. Next actions: {:?}.\n", job.candidate, validation.outcome, validation.experiments.len(), if validation.is_resolved() { "resolved" } else { "unresolved" }, if same { "same-model/reduced diversity" } else { "unknown; fresh context is not proof of independence" }, validation.unknowns, validation.next_actions));
             }
         }
         let unresolved = self
@@ -245,7 +297,7 @@ impl Workflow {
                     .find(|t| t.id == *id)
                     .is_some_and(|t| {
                         !matches!(t.state, ExecutionState::Queued | ExecutionState::Running)
-                            && !t.attempts.iter().any(|a| a.runtime_slot_held)
+                            && !t.attempts.iter().any(|a| campaign.attempt_occupied(a))
                     })
             })
     }
@@ -491,7 +543,20 @@ pub(crate) fn candidate_job(
             );
         }
     }
-    let input = serde_json::json!({"role":"validation", "candidate_id":accepted.id, "claim":candidate.claim,"prerequisites":candidate.prerequisites,"source":candidate.source,"scenario_sha256":workflow.scenario_sha256,"discoverer_effective_inputs":discoverer.effective_inputs,"independence":"fresh context; same-model or unknown diversity must be reported; not proof of independent reasoning"});
+    let experiment_receipts: Vec<_> = candidate
+        .experiments
+        .iter()
+        .filter_map(|id| campaign.experiments.iter().find(|experiment| experiment.id == *id))
+        .map(|experiment| {
+            serde_json::json!({
+                "experiment_id": experiment.id,
+                "task_id": experiment.task_id,
+                "scope": &experiment.recipe.scope,
+                "trial_assessments": experiment.trials.iter().filter_map(|trial| trial.verdict.as_ref().map(|verdict| verdict.assessment)).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let input = serde_json::json!({"role":"validation", "candidate_id":accepted.id, "claim":candidate.claim,"prerequisites":candidate.prerequisites,"source":candidate.source,"experiment_receipts":experiment_receipts,"scenario_sha256":workflow.scenario_sha256,"discoverer_effective_inputs":discoverer.effective_inputs,"independence":"fresh context; same-model or unknown diversity must be reported; not proof of independent reasoning"});
     let id = add_job(
         campaign,
         workflow,
