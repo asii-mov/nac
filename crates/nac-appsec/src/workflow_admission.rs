@@ -118,6 +118,15 @@ pub(crate) fn apply(campaign: &mut Campaign, lease: &Lease, record: &Accepted) -
         .clone();
     match &record.payload {
         Payload::Candidate { candidate } => {
+            if !candidate.experiments.is_empty() {
+                crate::experiments::validate_linked_experiments(
+                    campaign,
+                    lease.task_id,
+                    &candidate.experiments,
+                    &candidate.claim,
+                    &candidate.source,
+                )?;
+            }
             crate::workflow::candidate_job(campaign, &mut workflow, record, candidate)?;
         }
         Payload::StageResult {
@@ -237,6 +246,40 @@ pub(crate) fn apply(campaign: &mut Campaign, lease: &Lease, record: &Accepted) -
                     bounded(&validation.security_violation)?;
                     sources(campaign, &validation.sources, true)?;
                     sources(campaign, &validation.counterevidence, false)?;
+                    let candidate_id = job.candidate.context("validator candidate missing")?;
+                    let (claim, source) = campaign
+                        .accepted
+                        .iter()
+                        .find_map(|accepted| match &accepted.payload {
+                            Payload::Candidate { candidate } if accepted.id == candidate_id => {
+                                Some((candidate.claim.clone(), candidate.source.clone()))
+                            }
+                            _ => None,
+                        })
+                        .context("validator candidate unavailable")?;
+                    let experiment_state = if !validation.experiments.is_empty() {
+                        Some(crate::experiments::validate_linked_experiments(
+                            campaign,
+                            lease.task_id,
+                            &validation.experiments,
+                            &claim,
+                            &source,
+                        )?)
+                    } else {
+                        None
+                    };
+                    if let Some(state) = experiment_state {
+                        ensure!(
+                            !matches!(
+                                (validation.outcome, state),
+                                (ValidationOutcome::Disproved, EvidenceState::Reproduced)
+                                    | (ValidationOutcome::Disproved, EvidenceState::Inconclusive)
+                                    | (ValidationOutcome::Supported, EvidenceState::Inconclusive)
+                                    | (ValidationOutcome::Supported, EvidenceState::Disproved)
+                            ),
+                            "validation verdict contradicts linked experiment evidence"
+                        );
+                    }
                     ensure!(
                         validation.outcome == ValidationOutcome::Inconclusive
                             || validation.is_resolved(),
@@ -556,7 +599,7 @@ fn followup(
                 ) && !task
                     .attempts
                     .iter()
-                    .any(|attempt| attempt.runtime_slot_held))),
+                    .any(|attempt| campaign.attempt_occupied(attempt)))),
             "previous exploration must settle before admitting reopened work"
         );
     }

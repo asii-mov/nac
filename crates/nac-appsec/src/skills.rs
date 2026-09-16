@@ -55,6 +55,8 @@ pub struct FrozenResearch {
     pub templates: BTreeMap<String, Vec<FrozenSkill>>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub workflow: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub controlled_experiments: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -65,6 +67,22 @@ pub struct PreparedResearch {
     pub brief_sha256: String,
     pub lock_sha256: String,
     pub skills: Vec<FrozenSkill>,
+}
+
+impl PreparedResearch {
+    pub(crate) fn add_experiments(&mut self, profile: &crate::ExperimentProfile) -> Result<()> {
+        let public = serde_json::to_string(profile)?;
+        self.prompt
+            .push_str("\n--- frozen controlled-experiment profile ---\n");
+        self.prompt.push_str(&public);
+        self.prompt.push('\n');
+        ensure!(
+            self.prompt.len() as u64 <= MAX_INPUT_BYTES,
+            "effective skill prompt exceeds input bound"
+        );
+        self.prompt_sha256 = hash(self.prompt.as_bytes());
+        Ok(())
+    }
 }
 
 impl FrozenResearch {
@@ -138,7 +156,44 @@ impl FrozenResearch {
             selected,
             templates,
             workflow: false,
+            controlled_experiments: false,
         })
+    }
+
+    pub fn enable_controlled_experiments(&mut self) -> Result<()> {
+        self.verify()?;
+        self.add_controlled_experiments()?;
+        self.controlled_experiments = true;
+        Ok(())
+    }
+
+    fn add_controlled_experiments(&mut self) -> Result<()> {
+        let directory = open_root(&self.root)?;
+        for stage in ["discovery", "validation"] {
+            let mut skills = self.templates.get(stage).cloned().unwrap_or_default();
+            let mut seen = skills.iter().map(|skill| skill.id.clone()).collect();
+            let mut visiting = BTreeSet::new();
+            resolve_skill(
+                "controlled-experiment",
+                stage,
+                &self.lock,
+                &directory,
+                &mut seen,
+                &mut visiting,
+                &mut skills,
+            )?;
+            self.templates.insert(stage.into(), skills);
+        }
+        for (task, stage) in &self.stages {
+            self.selected.insert(
+                task.clone(),
+                self.templates
+                    .get(stage)
+                    .context("controlled experiment stage unavailable")?
+                    .clone(),
+            );
+        }
+        Ok(())
     }
 
     pub fn verify(&self) -> Result<()> {
@@ -147,6 +202,10 @@ impl FrozenResearch {
             actual.templates.clear();
         }
         actual.workflow = self.workflow;
+        if self.controlled_experiments {
+            actual.add_controlled_experiments()?;
+            actual.controlled_experiments = true;
+        }
         if self.workflow {
             ensure!(
                 self.stages.len() == 1 && self.stages.values().all(|stage| stage == "recon"),

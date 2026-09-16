@@ -22,7 +22,31 @@ impl Directory {
 
 impl Drop for Directory {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        restore_owner_write(&self.0);
         let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(unix)]
+fn restore_owner_write(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    if metadata.file_type().is_symlink() {
+        return;
+    }
+    let mode = if metadata.is_dir() { 0o700 } else { 0o600 };
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    if metadata.is_dir() {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            restore_owner_write(&entry.path());
+        }
     }
 }
 
@@ -86,6 +110,7 @@ pub fn manifest(tasks: usize) -> Result<Manifest> {
     .collect();
     Ok(Manifest {
         schema_version: 1,
+        experiments: None,
         research: None,
         repositories: vec![RepositoryInput {
             identity: "nac-test".into(),
@@ -141,6 +166,7 @@ pub fn candidate(manifest: &Manifest) -> Result<Submission> {
                     end_line: 1,
                     content_sha256: format!("{:x}", Sha256::digest(&source)),
                 },
+                experiments: vec![],
             },
         },
         evidence: vec![EvidenceInput::Upload { bytes: source }],

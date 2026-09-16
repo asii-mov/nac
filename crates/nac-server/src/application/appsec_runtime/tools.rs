@@ -1,7 +1,7 @@
 use super::*;
 use nac_appsec::{
-    Candidate, Controller, EvidenceInput, Lease, Payload, SourceRead, SqliteRepository,
-    StageResult, Submission,
+    Candidate, Controller, DependencySourceRead, EvidenceInput, ExperimentPlan, Id, Lease, Payload,
+    SourceRead, SqliteRepository, StageResult, Submission,
 };
 use std::sync::{Arc, Mutex};
 
@@ -17,12 +17,32 @@ pub(crate) const TOOL_NAMES: [&str; 10] = [
     "submit_workflow",
     "read_work_record",
 ];
+const EXPERIMENT_TOOL_NAMES: [&str; 4] = [
+    "run_experiment",
+    "read_experiment",
+    "cancel_experiment",
+    "read_dependency_source",
+];
+
+pub(crate) fn tool_names(experiments: bool) -> Vec<&'static str> {
+    TOOL_NAMES
+        .into_iter()
+        .chain(
+            experiments
+                .then_some(EXPERIMENT_TOOL_NAMES)
+                .into_iter()
+                .flatten(),
+        )
+        .collect()
+}
 
 #[derive(Clone)]
 pub(crate) struct ResearchTools {
     controller: Arc<Controller<SqliteRepository>>,
     lease: Lease,
+    state: std::path::PathBuf,
     pub progress: Arc<Mutex<Option<ArtifactRef>>>,
+    experiments: bool,
 }
 
 #[derive(Deserialize)]
@@ -84,6 +104,12 @@ struct WorkflowInput {
     evidence: Vec<EvidenceInput>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExperimentId {
+    experiment_id: Id,
+}
+
 impl ResearchTools {
     pub fn record_loaded(&self, proof: &LoadedWorkerInputs) -> Result<()> {
         use sha2::{Digest, Sha256};
@@ -129,19 +155,91 @@ impl ResearchTools {
     }
 
     pub fn new(state: &Path, lease: Lease) -> Result<Self> {
+        let controller = Arc::new(Controller::new(
+            SqliteRepository::open(state, 4)?,
+            ArtifactStore::open(state)?,
+            SystemClock,
+        ));
+        let campaign = controller.status(lease.run_id).ok();
+        let experiment_role = campaign
+            .as_ref()
+            .and_then(|campaign| campaign.workflow.as_ref())
+            .and_then(|workflow| workflow.jobs.get(&lease.task_id))
+            .map(|job| job.role)
+            .or_else(|| {
+                let campaign = campaign.as_ref()?;
+                let task = campaign
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == lease.task_id)?;
+                let stage = campaign
+                    .manifest
+                    .research
+                    .as_ref()?
+                    .stages
+                    .get(&task.plan.key)?;
+                match stage.as_str() {
+                    "discovery" => Some(nac_appsec::ResearchRole::Discovery),
+                    "validation" => Some(nac_appsec::ResearchRole::Validation),
+                    _ => None,
+                }
+            });
+        let experiments = campaign
+            .as_ref()
+            .is_some_and(|campaign| campaign.manifest.experiments.is_some())
+            && matches!(
+                experiment_role,
+                Some(nac_appsec::ResearchRole::Discovery | nac_appsec::ResearchRole::Validation)
+            );
         Ok(Self {
-            controller: Arc::new(Controller::new(
-                SqliteRepository::open(state, 4)?,
-                ArtifactStore::open(state)?,
-                SystemClock,
-            )),
+            controller,
             lease,
+            state: state.to_path_buf(),
             progress: Arc::default(),
+            experiments,
         })
+    }
+
+    pub(crate) fn tool_names(&self) -> Vec<&'static str> {
+        tool_names(self.experiments)
     }
 
     pub fn call(&self, name: &str, arguments: serde_json::Value) -> Result<serde_json::Value> {
         let submission = match name {
+            "run_experiment" => {
+                ensure!(self.experiments, "experiment_error:unauthorized");
+                let plan: ExperimentPlan = serde_json::from_value(arguments)
+                    .map_err(|_| anyhow::anyhow!("experiment_error:invalid_request"))?;
+                return self
+                    .controller
+                    .run_experiment(&self.lease, plan)
+                    .map(|value| {
+                        serde_json::to_value(value).unwrap_or_else(
+                            |_| serde_json::json!({"error":"experiment_error:encoding"}),
+                        )
+                    })
+                    .map_err(|_| anyhow::anyhow!("experiment_error:request_rejected"));
+            }
+            "read_experiment" => {
+                ensure!(self.experiments, "experiment_error:unauthorized");
+                let input: ExperimentId = serde_json::from_value(arguments)
+                    .map_err(|_| anyhow::anyhow!("experiment_error:invalid_request"))?;
+                return self
+                    .controller
+                    .read_experiment(&self.lease, input.experiment_id)
+                    .and_then(|value| Ok(serde_json::to_value(value)?))
+                    .map_err(|_| anyhow::anyhow!("experiment_error:unavailable"));
+            }
+            "cancel_experiment" => {
+                ensure!(self.experiments, "experiment_error:unauthorized");
+                let input: ExperimentId = serde_json::from_value(arguments)
+                    .map_err(|_| anyhow::anyhow!("experiment_error:invalid_request"))?;
+                return self
+                    .controller
+                    .cancel_experiment(&self.lease, input.experiment_id)
+                    .and_then(|value| Ok(serde_json::to_value(value)?))
+                    .map_err(|_| anyhow::anyhow!("experiment_error:request_rejected"));
+            }
             "read_work_record" => {
                 let request: WorkRead = serde_json::from_value(arguments)?;
                 return self.controller.read_work_record(
@@ -183,6 +281,41 @@ impl ResearchTools {
                     .lock()
                     .map_err(|_| anyhow::anyhow!("progress lock poisoned"))? =
                     Some(receipt.progress.clone());
+                return Ok(serde_json::to_value(receipt)?);
+            }
+            "read_dependency_source" => {
+                ensure!(self.experiments, "dependency_error:unauthorized");
+                let request: DependencySourceRead = serde_json::from_value(arguments)
+                    .map_err(|_| anyhow::anyhow!("dependency_error:invalid_request"))?;
+                let campaign = self.controller.status(self.lease.run_id)?;
+                let dependency = campaign
+                    .manifest
+                    .experiments
+                    .as_ref()
+                    .and_then(|profile| {
+                        profile.dependencies.iter().find(|dependency| {
+                            dependency.package == request.package
+                                && dependency.version == request.version
+                                && dependency.source_ref == request.source_ref
+                                && dependency.archive_sha256 == request.archive_sha256
+                        })
+                    })
+                    .context("dependency_error:undeclared")?;
+                let archive = self
+                    .state
+                    .join("dependencies")
+                    .join(format!("{}.tar", dependency.archive_sha256));
+                ensure!(archive.is_file(), "dependency_error:prefetch_missing");
+                let receipt = self
+                    .controller
+                    .read_dependency(&self.lease, request, &archive)?;
+                if let Some(progress) = &receipt.progress {
+                    *self
+                        .progress
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("progress lock poisoned"))? =
+                        Some(progress.clone());
+                }
                 return Ok(serde_json::to_value(receipt)?);
             }
             "search_source" => {

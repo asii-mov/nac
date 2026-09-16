@@ -227,6 +227,7 @@ fn validator_is_unique_blind_role_bound_and_resumable_without_erasing_history() 
         prerequisites: vec!["unauthenticated caller".into()],
         unresolved_assumptions: vec!["DISCOVERER-CONFIDENCE-SECRET".into()],
         source: source.clone(),
+        experiments: vec![],
     };
     let submission = Submission {
         schema_version: 1,
@@ -265,6 +266,7 @@ fn validator_is_unique_blind_role_bound_and_resumable_without_erasing_history() 
         counterevidence: vec![],
         unknowns: vec!["configuration".into()],
         next_actions: vec!["supply pinned configuration".into()],
+        experiments: vec![],
     };
     assert!(action(
         &controller,

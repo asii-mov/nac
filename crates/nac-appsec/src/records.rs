@@ -39,7 +39,7 @@ pub enum ExecutionState {
     Cancelled,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepositoryInput {
     pub identity: String,
@@ -78,6 +78,8 @@ pub struct TaskPlan {
 pub struct Manifest {
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub experiments: Option<crate::ExperimentProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub research: Option<crate::FrozenResearch>,
     pub repositories: Vec<RepositoryInput>,
     pub declared_inputs: BTreeMap<String, Option<String>>,
@@ -88,7 +90,7 @@ pub struct Manifest {
     pub tasks: Vec<TaskPlan>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MonetaryPolicy {
     Uncapped,
@@ -197,7 +199,7 @@ pub struct ArtifactRef {
     pub bytes: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceRef {
     pub repository: String,
@@ -208,10 +210,14 @@ pub struct SourceRef {
     pub content_sha256: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceState {
     Candidate,
+    StaticSupported,
+    Reproduced,
+    Disproved,
+    Inconclusive,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -227,6 +233,8 @@ pub struct Candidate {
     pub prerequisites: Vec<String>,
     pub unresolved_assumptions: Vec<String>,
     pub source: SourceRef,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub experiments: Vec<Id>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -307,6 +315,8 @@ pub struct Campaign {
     pub tasks: Vec<Task>,
     pub accepted: Vec<Accepted>,
     pub pending_submissions: Vec<ReservedSubmission>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub experiments: Vec<crate::Experiment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<crate::Workflow>,
 }
@@ -315,6 +325,14 @@ impl Campaign {
     pub fn state(&self) -> ExecutionState {
         if self.cancelled {
             return ExecutionState::Cancelled;
+        }
+        if self
+            .experiments
+            .iter()
+            .flat_map(|experiment| &experiment.trials)
+            .any(crate::ExperimentTrial::blocks_campaign)
+        {
+            return ExecutionState::Blocked;
         }
         let has = |state| self.tasks.iter().any(|task| task.state == state);
         if has(ExecutionState::Running) {
@@ -390,7 +408,7 @@ impl Campaign {
                     .unwrap_or("no terminal reason recorded")
             ));
             if let Some(attempt) = task.attempts.last() {
-                text.push_str(&format!("  Watchdog: {:?}; last liveness: {}; last meaningful progress: {}; runtime slot held: {}; consecutive failed recoveries: {}.\n", attempt.watchdog_state, attempt.last_liveness_ms, attempt.last_progress_ms, attempt.runtime_slot_held, task.failed_recoveries));
+                text.push_str(&format!("  Watchdog: {:?}; last liveness: {}; last meaningful progress: {}; occupied attempt: {}; consecutive failed recoveries: {}.\n", attempt.watchdog_state, attempt.last_liveness_ms, attempt.last_progress_ms, self.attempt_occupied(attempt), task.failed_recoveries));
                 text.push_str(&format!(
                     "  Stop intent: {:?}; observed physical exit: {:?}.\n",
                     attempt.stop_intent, attempt.runtime_exit

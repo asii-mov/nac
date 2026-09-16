@@ -1,8 +1,22 @@
 {
   "compatibility": "nac-source-review-v1",
-  "registry_sha256": "50f117f77b67d862b0b3d2b413f7687f3953117e1a69f4a61ecc236c89c8ee41",
+  "registry_sha256": "d8b148253f35cff9c2bb7102545e322f0ce769fb4d3ba5c5de8b0c476fbc6808",
   "schema_version": 1,
   "skills": {
+    "controlled-experiment": {
+      "dependencies": [
+        "evidence"
+      ],
+      "entry": "skills/controlled-experiment/SKILL.md",
+      "files": {
+        "skills/controlled-experiment/SKILL.md": "177103d23bbfc327cc516fb90f9fe4c48bf1335ff8436c15bccbcf8fed4cdedc"
+      },
+      "stages": [
+        "discovery",
+        "validation"
+      ],
+      "version": "1.0.0"
+    },
     "discovery": {
       "dependencies": [
         "evidence"

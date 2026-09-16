@@ -152,6 +152,8 @@ pub struct Validation {
     pub counterevidence: Vec<SourceRef>,
     pub unknowns: Vec<String>,
     pub next_actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub experiments: Vec<Id>,
 }
 
 impl Validation {

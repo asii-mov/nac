@@ -1,4 +1,4 @@
-use crate::application::appsec_runtime::tools::{ResearchTools, TOOL_NAMES};
+use crate::application::appsec_runtime::tools::ResearchTools;
 use axum::{
     body::Body,
     extract::Request,
@@ -74,7 +74,7 @@ impl ServerHandler for ResearchMcp {
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult::with_all_items(
-            TOOL_NAMES.iter().map(|name| definition(name)).collect(),
+            self.0.tool_names().into_iter().map(definition).collect(),
         ))
     }
 
@@ -107,15 +107,21 @@ impl ServerHandler for ResearchMcp {
 fn definition(name: &'static str) -> Tool {
     let source = json!({"type":"object", "additionalProperties":false,"required":["repository","path","start_line","end_line"],"properties":{"repository":{"type":"string"},"path":{"type":"string"},"start_line":{"type":"integer","minimum":1},"end_line":{"type":"integer","minimum":1}}});
     let evidence = json!({"type":"array", "items":{"oneOf":[{"type":"object","additionalProperties":false,"required":["kind","bytes"],"properties":{"kind":{"const":"upload"},"bytes":{"type":"array","items":{"type":"integer","minimum":0,"maximum":255}}}},{"type":"object","additionalProperties":false,"required":["kind","artifact"],"properties":{"kind":{"const":"stored"},"artifact":{"type":"object","required":["sha256","bytes"],"additionalProperties":false,"properties":{"sha256":{"type":"string"},"bytes":{"type":"integer"}}}}}]}});
+    let experiment_ids =
+        json!({"type":"array","maxItems":8,"items":{"type":"string","format":"uuid"}});
     let (description, schema) = match name {
         "read_work_record" => ("Read a bounded byte range of a canonical accepted record from query_work. Verify sha256 when assembling pages. Validators cannot read discoverer records or notes.", json!({"type":"object","additionalProperties":false,"required":["record_id","offset","length"],"properties":{"record_id":{"type":"string"},"offset":{"type":"integer","minimum":0},"length":{"type":"integer","minimum":1}}})),
         "query_work" => ("Read bounded canonical task/result/family pages and the revision. Validators see only their blinded assignment and own records.", json!({"type":"object","additionalProperties":false,"required":["offset","limit"],"properties":{"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":32}}})),
         "submit_workflow" => ("Submit a typed map, source question/resolution, approach, followup, validate or synthesize action. Role, task and fence are server-bound. Revision must come from query_work. Only the assigned validator can submit its verdict.", workflow_schema::submission(evidence)),
         "list_source_files" => ("List a bounded page of regular UTF-8 source paths at the declared pinned commit. Use next_after as the next cursor. No working tree, symlinks, Git internals or other revisions.", json!({"type":"object","additionalProperties":false,"required":["repository","after","limit"],"properties":{"repository":{"type":"string"},"after":{"type":["string","null"]},"limit":{"type":"integer","minimum":1,"maximum":256}}})),
         "read_source" => ("Read an existing regular file only at the declared repository commit. Returns validated SourceRef and trusted source receipt. No Git history or network fetch.", source),
+        "read_dependency_source" => ("Read a bounded range from one exact prefetched dependency archive. Package, version, source ref and archive hash must match the frozen profile.", json!({"type":"object","additionalProperties":false,"required":["package","version","source_ref","archive_sha256","path","offset","length"],"properties":{"package":{"type":"string"},"version":{"type":"string"},"source_ref":{"type":"string"},"archive_sha256":{"type":"string"},"path":{"type":"string"},"offset":{"type":"integer","minimum":0},"length":{"type":"integer","minimum":1,"maximum":262144}}})),
         "search_source" => ("Search a bounded pinned source range for a literal string.", json!({"type":"object","additionalProperties":false,"required":["source","literal"],"properties":{"source":source,"literal":{"type":"string"}}})),
-        "submit_candidate" => ("Propose a candidate, not a validated finding. Use SourceRef from read_source. Authority is bound to this connection, never arguments.", json!({"type":"object","additionalProperties":false,"required":["key","candidate","evidence"],"properties":{"key":{"type":"string"},"candidate":{"type":"object","additionalProperties":false,"required":["claim","prerequisites","unresolved_assumptions","source"],"properties":{"claim":{"type":"string"},"prerequisites":{"type":"array","items":{"type":"string"}},"unresolved_assumptions":{"type":"array","items":{"type":"string"}},"source":{"type":"object","required":["repository","commit","path","start_line","end_line","content_sha256"],"additionalProperties":false,"properties":{"repository":{"type":"string"},"commit":{"type":"string"},"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"},"content_sha256":{"type":"string"}}}}},"evidence":evidence}})),
+        "submit_candidate" => ("Propose a candidate, not a validated finding. Use SourceRef from read_source. Link only settled experiments whose hypothesis and source exactly match the claim. Authority is bound to this connection, never arguments.", json!({"type":"object","additionalProperties":false,"required":["key","candidate","evidence"],"properties":{"key":{"type":"string"},"candidate":{"type":"object","additionalProperties":false,"required":["claim","prerequisites","unresolved_assumptions","source"],"properties":{"claim":{"type":"string"},"prerequisites":{"type":"array","items":{"type":"string"}},"unresolved_assumptions":{"type":"array","items":{"type":"string"}},"source":{"type":"object","required":["repository","commit","path","start_line","end_line","content_sha256"],"additionalProperties":false,"properties":{"repository":{"type":"string"},"commit":{"type":"string"},"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"},"content_sha256":{"type":"string"}}},"experiments":experiment_ids}},"evidence":evidence}})),
         "submit_stage_result" => ("Submit a typed stage checkpoint with structured evidence. Completion covers the exact assigned scope, not security assurance.", json!({"type":"object","additionalProperties":false,"required":["key","result","evidence"],"properties":{"key":{"type":"string"},"result":{"oneOf":[{"type":"object","additionalProperties":false,"required":["status","scope"],"properties":{"status":{"const":"completed"},"scope":{"type":"string"}}},{"type":"object","additionalProperties":false,"required":["status","reason"],"properties":{"status":{"enum":["partial","blocked","failed"]},"reason":{"type":"string"}}}]},"evidence":evidence}})),
+        "run_experiment" => ("Reserve a frozen bounded HTTP experiment for this task. The controller supplies the lease, role, runner, target, actor credentials and evaluator. Returns a ticket, never raw target output.", json!({"type":"object","additionalProperties":false,"required":["schema_version","key","recipe_id","hypothesis","sources","requests"],"properties":{"schema_version":{"const":1},"key":{"type":"string","minLength":1,"maxLength":128},"recipe_id":{"type":"string","minLength":1,"maxLength":128},"hypothesis":{"type":"string","minLength":1,"maxLength":4096},"sources":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["repository","commit","path","start_line","end_line","content_sha256"],"properties":{"repository":{"type":"string"},"commit":{"type":"string"},"path":{"type":"string"},"start_line":{"type":"integer","minimum":1},"end_line":{"type":"integer","minimum":1},"content_sha256":{"type":"string"}}}},"requests":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["actor","method","path","body"],"properties":{"actor":{"type":"string"},"method":{"enum":["get","post"]},"path":{"type":"string"},"body":{"type":"string"}}}}}})),
+        "read_experiment" => ("Read this task's safe experiment state, closed assessment and approved diagnostic codes. Raw responses, captures, secrets and evaluator rules are unavailable.", json!({"type":"object","additionalProperties":false,"required":["experiment_id"],"properties":{"experiment_id":{"type":"string","format":"uuid"}}})),
+        "cancel_experiment" => ("Commit a stop tombstone for this task's experiment. Cleanup remains separate and capacity stays occupied until the controller proves no live or pending target.", json!({"type":"object","additionalProperties":false,"required":["experiment_id"],"properties":{"experiment_id":{"type":"string","format":"uuid"}}})),
         "record_blocker" => ("Record an explicit environment or input blocker with evidence.", json!({"type":"object","additionalProperties":false,"required":["key","reason","evidence"],"properties":{"key":{"type":"string"},"reason":{"type":"string"},"evidence":evidence}})),
         _ => ("Read a bounded byte range of an artifact already accepted for this task.", json!({"type":"object","additionalProperties":false,"required":["artifact","offset","length"],"properties":{"artifact":{"type":"object","additionalProperties":false,"required":["sha256","bytes"],"properties":{"sha256":{"type":"string"},"bytes":{"type":"integer"}}},"offset":{"type":"integer","minimum":0},"length":{"type":"integer","minimum":1}}})),
     };
@@ -147,6 +153,14 @@ mod tests {
                 token: id,
             },
         )?;
+        assert!(!tools.tool_names().contains(&"run_experiment"));
+        assert_eq!(
+            tools
+                .call("run_experiment", json!({}))
+                .unwrap_err()
+                .to_string(),
+            "experiment_error:unauthorized"
+        );
         let app = router(tools.clone(), "scripted-connection-token".into(), 128);
         let unauthenticated = Request::builder()
             .uri("/mcp")

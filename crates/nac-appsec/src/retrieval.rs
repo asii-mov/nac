@@ -41,6 +41,18 @@ pub struct SourceFiles {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DependencySourceRead {
+    pub package: String,
+    pub version: String,
+    pub source_ref: String,
+    pub archive_sha256: String,
+    pub path: String,
+    pub offset: u64,
+    pub length: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum InventoryReceipt {
     LegacyHash(String),
@@ -118,31 +130,59 @@ impl InventoryReceipt {
     }
 }
 
-#[cfg(test)]
-mod inventory_tests {
-    use super::*;
-
-    #[test]
-    fn enumeration_never_combines_different_pinned_listing_identities() -> Result<()> {
-        let mut receipt = InventoryReceipt::LegacyHash("listing-a".into());
-        assert!(!receipt.complete());
-        receipt.observe("commit-a", "listing-a", 4, (0, 2), true)?;
-        let before = serde_json::to_value(&receipt)?;
-        assert!(receipt
-            .observe("commit-a", "listing-b", 4, (2, 4), false)
-            .is_err());
-        assert!(receipt
-            .observe("commit-b", "listing-a", 4, (2, 4), false)
-            .is_err());
-        assert_eq!(serde_json::to_value(&receipt)?, before);
-        receipt.observe("commit-a", "listing-a", 4, (2, 4), false)?;
-        assert!(receipt.complete());
-        assert!(!receipt.mapped());
-        Ok(())
-    }
-}
-
 impl<R: Repository, C: Clock> Controller<R, C> {
+    pub fn read_dependency(
+        &self,
+        lease: &Lease,
+        request: DependencySourceRead,
+        archive: &std::path::Path,
+    ) -> Result<crate::DependencyRead> {
+        let mut campaign = self.repository.read(lease.run_id)?;
+        validate_lease(&mut campaign, lease, self.clock.now_ms()?)?;
+        let profile = campaign
+            .manifest
+            .experiments
+            .as_ref()
+            .context("prefetched dependencies require controlled experiments")?;
+        let dependency = profile
+            .dependencies
+            .iter()
+            .find(|dependency| {
+                dependency.package == request.package
+                    && dependency.version == request.version
+                    && dependency.source_ref == request.source_ref
+                    && dependency.archive_sha256 == request.archive_sha256
+            })
+            .context("undeclared prefetched dependency")?;
+        let receipt =
+            dependency.read_range(archive, &request.path, request.offset, request.length)?;
+        let task = campaign
+            .tasks
+            .iter()
+            .find(|task| task.id == lease.task_id)
+            .context("missing task")?;
+        ensure!(
+            serde_json::to_vec(&receipt)?.len() as u64 <= task.plan.operation_limits.output_bytes,
+            "dependency source receipt exceeds response bound"
+        );
+        let progress = self.artifacts.write(
+            &serde_json::to_vec(&serde_json::json!({
+                "kind": "prefetched_dependency",
+                "package": receipt.package,
+                "version": receipt.version,
+                "path": receipt.path,
+                "offset": receipt.offset,
+                "length": receipt.length,
+                "archive_sha256": receipt.archive_sha256,
+                "content_sha256": receipt.content_sha256,
+            }))?,
+            task.plan.operation_limits.output_bytes,
+        )?;
+        let mut receipt = receipt;
+        receipt.progress = Some(progress);
+        Ok(receipt)
+    }
+
     pub fn list_source_files(
         &self,
         lease: &Lease,
@@ -183,8 +223,17 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     .and_then(|index| std::str::from_utf8(&entry[index + 1..]).ok())
             })
             .filter(|path| safe_source_path(path))
+            .filter(|path| {
+                crate::package::require_member(&campaign.manifest, &request.repository, path)
+                    .is_ok()
+            })
             .collect();
         paths.sort_unstable();
+        let listing_hash = if campaign.manifest.experiments.is_some() {
+            hash(&serde_json::to_vec(&paths)?)
+        } else {
+            hash(&listing)
+        };
         let total = paths.len();
         let start = request
             .after
@@ -219,7 +268,6 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                 .update(lease.run_id, None, &mut |campaign, _| {
                     validate_lease(campaign, lease, self.clock.now_ms()?)?;
                     if let Some(workflow) = &mut campaign.workflow {
-                        let listing_hash = hash(&listing);
                         workflow
                             .inventory
                             .entry(request.repository.clone())
@@ -241,6 +289,7 @@ impl<R: Repository, C: Clock> Controller<R, C> {
     pub fn read_source(&self, lease: &Lease, request: SourceRead) -> Result<SourceReceipt> {
         let mut campaign = self.repository.read(lease.run_id)?;
         validate_lease(&mut campaign, lease, self.clock.now_ms()?)?;
+        crate::package::require_member(&campaign.manifest, &request.repository, &request.path)?;
         let task = campaign
             .tasks
             .iter()
@@ -328,5 +377,29 @@ impl<R: Repository, C: Clock> Controller<R, C> {
             "artifact range exceeds response bound"
         );
         self.artifacts.read_range(artifact, offset, length)
+    }
+}
+
+#[cfg(test)]
+mod inventory_tests {
+    use super::*;
+
+    #[test]
+    fn enumeration_never_combines_different_pinned_listing_identities() -> Result<()> {
+        let mut receipt = InventoryReceipt::LegacyHash("listing-a".into());
+        assert!(!receipt.complete());
+        receipt.observe("commit-a", "listing-a", 4, (0, 2), true)?;
+        let before = serde_json::to_value(&receipt)?;
+        assert!(receipt
+            .observe("commit-a", "listing-b", 4, (2, 4), false)
+            .is_err());
+        assert!(receipt
+            .observe("commit-b", "listing-a", 4, (2, 4), false)
+            .is_err());
+        assert_eq!(serde_json::to_value(&receipt)?, before);
+        receipt.observe("commit-a", "listing-a", 4, (2, 4), false)?;
+        assert!(receipt.complete());
+        assert!(!receipt.mapped());
+        Ok(())
     }
 }

@@ -90,7 +90,7 @@ pub async fn run_appsec_worker(directory: &Path) -> Result<()> {
                 },
             },
         )]),
-        allowed_tools: tools::TOOL_NAMES
+        allowed_tools: tools::tool_names(launch.assignment.experiment_tools)
             .iter()
             .map(|name| format!("mcp__controller__{name}"))
             .collect::<BTreeSet<_>>(),
