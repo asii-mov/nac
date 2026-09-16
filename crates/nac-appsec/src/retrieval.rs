@@ -40,6 +40,108 @@ pub struct SourceFiles {
     pub next_after: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum InventoryReceipt {
+    LegacyHash(String),
+    Enumeration(InventoryEnumeration),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InventoryEnumeration {
+    pub commit: String,
+    pub listing_sha256: String,
+    pub total_files: u64,
+    pub from_start: bool,
+    pub delivered: Vec<(u64, u64)>,
+    pub mapped: bool,
+}
+
+impl InventoryReceipt {
+    pub fn complete(&self) -> bool {
+        matches!(self, Self::Enumeration(receipt) if receipt.from_start && (receipt.total_files == 0 || receipt.delivered == [(0, receipt.total_files)]))
+    }
+
+    pub fn mapped(&self) -> bool {
+        self.complete() && matches!(self, Self::Enumeration(receipt) if receipt.mapped)
+    }
+
+    pub(crate) fn freeze(&mut self) {
+        if let Self::Enumeration(receipt) = self {
+            receipt.mapped = true;
+        }
+    }
+
+    fn observe(
+        &mut self,
+        commit: &str,
+        listing: &str,
+        total: u64,
+        range: (u64, u64),
+        from_start: bool,
+    ) -> Result<()> {
+        if let Self::LegacyHash(previous) = self {
+            ensure!(previous == listing, "pinned inventory identity changed");
+            *self = Self::Enumeration(InventoryEnumeration {
+                commit: commit.into(),
+                listing_sha256: listing.into(),
+                total_files: total,
+                from_start: false,
+                delivered: vec![],
+                mapped: false,
+            });
+        }
+        if let Self::Enumeration(receipt) = self {
+            ensure!(
+                receipt.commit == commit
+                    && receipt.listing_sha256 == listing
+                    && receipt.total_files == total,
+                "pinned inventory identity changed"
+            );
+            receipt.from_start |= from_start;
+            if range.0 < range.1 {
+                receipt.delivered.push(range);
+                receipt.delivered.sort_unstable();
+                let mut merged: Vec<(u64, u64)> = vec![];
+                for &(start, end) in &receipt.delivered {
+                    if let Some(last) = merged.last_mut().filter(|last| start <= last.1) {
+                        last.1 = last.1.max(end);
+                    } else {
+                        merged.push((start, end));
+                    }
+                }
+                receipt.delivered = merged;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod inventory_tests {
+    use super::*;
+
+    #[test]
+    fn enumeration_never_combines_different_pinned_listing_identities() -> Result<()> {
+        let mut receipt = InventoryReceipt::LegacyHash("listing-a".into());
+        assert!(!receipt.complete());
+        receipt.observe("commit-a", "listing-a", 4, (0, 2), true)?;
+        let before = serde_json::to_value(&receipt)?;
+        assert!(receipt
+            .observe("commit-a", "listing-b", 4, (2, 4), false)
+            .is_err());
+        assert!(receipt
+            .observe("commit-b", "listing-a", 4, (2, 4), false)
+            .is_err());
+        assert_eq!(serde_json::to_value(&receipt)?, before);
+        receipt.observe("commit-a", "listing-a", 4, (2, 4), false)?;
+        assert!(receipt.complete());
+        assert!(!receipt.mapped());
+        Ok(())
+    }
+}
+
 impl<R: Repository, C: Clock> Controller<R, C> {
     pub fn list_source_files(
         &self,
@@ -80,11 +182,15 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     .position(|byte| *byte == b'\t')
                     .and_then(|index| std::str::from_utf8(&entry[index + 1..]).ok())
             })
-            .filter(|path| {
-                safe_source_path(path) && request.after.as_deref().is_none_or(|after| *path > after)
-            })
+            .filter(|path| safe_source_path(path))
             .collect();
         paths.sort_unstable();
+        let total = paths.len();
+        let start = request
+            .after
+            .as_deref()
+            .map_or(0, |after| paths.partition_point(|path| *path <= after));
+        let paths = &paths[start..];
         let mut result = SourceFiles {
             repository: repo.identity.clone(),
             commit: repo.commit.clone(),
@@ -108,6 +214,27 @@ impl<R: Repository, C: Clock> Controller<R, C> {
             serde_json::to_vec(&result)?.len() as u64 <= limit,
             "source inventory exceeds response bound"
         );
+        if campaign.workflow.is_some() {
+            self.repository
+                .update(lease.run_id, None, &mut |campaign, _| {
+                    validate_lease(campaign, lease, self.clock.now_ms()?)?;
+                    if let Some(workflow) = &mut campaign.workflow {
+                        let listing_hash = hash(&listing);
+                        workflow
+                            .inventory
+                            .entry(request.repository.clone())
+                            .or_insert_with(|| InventoryReceipt::LegacyHash(listing_hash.clone()))
+                            .observe(
+                                &result.commit,
+                                &listing_hash,
+                                total.try_into()?,
+                                (start.try_into()?, (start + result.files.len()).try_into()?),
+                                request.after.is_none(),
+                            )?;
+                    }
+                    Ok(())
+                })?;
+        }
         Ok(result)
     }
 
@@ -128,6 +255,8 @@ impl<R: Repository, C: Clock> Controller<R, C> {
             .context("undeclared repository")?;
         ensure!(safe_source_path(&request.path), "unsafe source path");
         let object = format!("{}:{}", repo.commit, request.path);
+        let started_ms = self.clock.now_ms()?;
+        let started = std::time::Instant::now();
         let listing = git(
             &repo.checkout,
             &["ls-tree", "-z", &repo.commit, "--", &request.path],
@@ -153,6 +282,9 @@ impl<R: Repository, C: Clock> Controller<R, C> {
             end_line: request.end_line,
             content_sha256: hash(&bytes),
         };
+        let ended_ms = self.clock.now_ms()?;
+        let measured: u64 = started.elapsed().as_millis().try_into()?;
+        let end = started_ms.saturating_add(measured).min(ended_ms);
         let progress = self.artifacts.write(&serde_json::to_vec(&serde_json::json!({"kind":"pinned_source", "repository":source.repository, "commit":source.commit, "path":source.path, "content_sha256":source.content_sha256}))?, limit)?;
         let receipt = SourceReceipt {
             source,
@@ -163,6 +295,9 @@ impl<R: Repository, C: Clock> Controller<R, C> {
             serde_json::to_vec(&receipt)?.len() as u64 <= limit,
             "source receipt exceeds output bound"
         );
+        if campaign.workflow.is_some() && end >= started_ms {
+            self.record_research_interval(lease, &receipt.source, started_ms, end)?;
+        }
         Ok(receipt)
     }
 

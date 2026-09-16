@@ -20,6 +20,9 @@ use rmcp::{
 };
 use serde_json::{json, Value};
 
+#[path = "appsec_workflow_schema.rs"]
+mod workflow_schema;
+
 pub(crate) fn router(tools: ResearchTools, token: String, output_limit: usize) -> Router {
     let service = StreamableHttpService::new(
         move || Ok(ResearchMcp(tools.clone(), output_limit)),
@@ -105,6 +108,9 @@ fn definition(name: &'static str) -> Tool {
     let source = json!({"type":"object", "additionalProperties":false,"required":["repository","path","start_line","end_line"],"properties":{"repository":{"type":"string"},"path":{"type":"string"},"start_line":{"type":"integer","minimum":1},"end_line":{"type":"integer","minimum":1}}});
     let evidence = json!({"type":"array", "items":{"oneOf":[{"type":"object","additionalProperties":false,"required":["kind","bytes"],"properties":{"kind":{"const":"upload"},"bytes":{"type":"array","items":{"type":"integer","minimum":0,"maximum":255}}}},{"type":"object","additionalProperties":false,"required":["kind","artifact"],"properties":{"kind":{"const":"stored"},"artifact":{"type":"object","required":["sha256","bytes"],"additionalProperties":false,"properties":{"sha256":{"type":"string"},"bytes":{"type":"integer"}}}}}]}});
     let (description, schema) = match name {
+        "read_work_record" => ("Read a bounded byte range of a canonical accepted record from query_work. Verify sha256 when assembling pages. Validators cannot read discoverer records or notes.", json!({"type":"object","additionalProperties":false,"required":["record_id","offset","length"],"properties":{"record_id":{"type":"string"},"offset":{"type":"integer","minimum":0},"length":{"type":"integer","minimum":1}}})),
+        "query_work" => ("Read bounded canonical task/result/family pages and the revision. Validators see only their blinded assignment and own records.", json!({"type":"object","additionalProperties":false,"required":["offset","limit"],"properties":{"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":32}}})),
+        "submit_workflow" => ("Submit a typed map, source question/resolution, approach, followup, validate or synthesize action. Role, task and fence are server-bound. Revision must come from query_work. Only the assigned validator can submit its verdict.", workflow_schema::submission(evidence)),
         "list_source_files" => ("List a bounded page of regular UTF-8 source paths at the declared pinned commit. Use next_after as the next cursor. No working tree, symlinks, Git internals or other revisions.", json!({"type":"object","additionalProperties":false,"required":["repository","after","limit"],"properties":{"repository":{"type":"string"},"after":{"type":["string","null"]},"limit":{"type":"integer","minimum":1,"maximum":256}}})),
         "read_source" => ("Read an existing regular file only at the declared repository commit. Returns validated SourceRef and trusted source receipt. No Git history or network fetch.", source),
         "search_source" => ("Search a bounded pinned source range for a literal string.", json!({"type":"object","additionalProperties":false,"required":["source","literal"],"properties":{"source":source,"literal":{"type":"string"}}})),

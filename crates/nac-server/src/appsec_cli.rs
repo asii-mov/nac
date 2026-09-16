@@ -29,6 +29,8 @@ enum AppsecCommand {
         brief: PathBuf,
         #[arg(long)]
         output: PathBuf,
+        #[arg(long)]
+        workflow: bool,
     },
     /// Reconcile and drive admitted source-only workers until stopped
     Watch {
@@ -114,15 +116,28 @@ pub(super) async fn run(cli: AppsecCli) -> anyhow::Result<()> {
             skills,
             brief,
             output,
+            workflow,
         } => {
             let mut manifest: Manifest = serde_json::from_slice(&std::fs::read(manifest)?)?;
             let brief = serde_json::from_slice(&std::fs::read(brief)?)?;
             let stages = manifest
                 .tasks
                 .iter()
-                .map(|task| (task.key.clone(), "discovery".into()))
+                .map(|task| {
+                    (
+                        task.key.clone(),
+                        if workflow {
+                            "recon".into()
+                        } else {
+                            "discovery".into()
+                        },
+                    )
+                })
                 .collect();
-            manifest.research = Some(nac_appsec::FrozenResearch::resolve(&skills, brief, stages)?);
+            let mut research = nac_appsec::FrozenResearch::resolve(&skills, brief, stages)?;
+            research.workflow = workflow;
+            research.verify()?;
+            manifest.research = Some(research);
             write_report(&output, &serde_json::to_vec_pretty(&manifest)?)?;
         }
         AppsecCommand::Watch { state, run_id } => {

@@ -16,6 +16,8 @@ mod discovery;
 mod operator;
 #[path = "ownership_tests.rs"]
 mod ownership;
+#[path = "workflow_tests.rs"]
+mod workflow;
 
 #[test]
 fn process_helper() {

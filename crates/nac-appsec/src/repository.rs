@@ -187,11 +187,20 @@ fn read_campaign(connection: &Connection, run: Id) -> Result<Campaign> {
         )
         .optional()?;
     let (revision, record) = row.ok_or_else(|| anyhow::anyhow!("unknown campaign"))?;
-    let campaign: Campaign = serde_json::from_str(&record)?;
+    let mut campaign: Campaign = serde_json::from_str(&record)?;
     require_version(campaign.schema_version)?;
     ensure!(
         campaign.id == run && campaign.revision == revision,
         "corrupt campaign identity or revision"
     );
+    if campaign
+        .workflow
+        .as_ref()
+        .is_some_and(|workflow| workflow.complete && !workflow.completion_supported(&campaign))
+    {
+        if let Some(workflow) = &mut campaign.workflow {
+            workflow.complete = false;
+        }
+    }
     Ok(campaign)
 }

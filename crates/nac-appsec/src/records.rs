@@ -1,3 +1,4 @@
+use crate::WorkflowAction;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 use uuid::Uuid;
@@ -231,8 +232,16 @@ pub struct Candidate {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Payload {
-    Candidate { candidate: Candidate },
-    StageResult { result: StageResult },
+    Candidate {
+        candidate: Candidate,
+    },
+    StageResult {
+        result: StageResult,
+    },
+    Workflow {
+        revision: u64,
+        action: WorkflowAction,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -298,6 +307,8 @@ pub struct Campaign {
     pub tasks: Vec<Task>,
     pub accepted: Vec<Accepted>,
     pub pending_submissions: Vec<ReservedSubmission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<crate::Workflow>,
 }
 
 impl Campaign {
@@ -313,7 +324,15 @@ impl Campaign {
             .iter()
             .all(|task| task.state == ExecutionState::Completed)
         {
-            ExecutionState::Completed
+            if self
+                .workflow
+                .as_ref()
+                .is_none_or(|workflow| workflow.completion_supported(self))
+            {
+                ExecutionState::Completed
+            } else {
+                ExecutionState::Partial
+            }
         } else if self.dispatch_blocker.is_some() || has(ExecutionState::Blocked) {
             ExecutionState::Blocked
         } else if has(ExecutionState::Partial) || has(ExecutionState::Completed) {
@@ -331,14 +350,25 @@ impl Campaign {
         let completed = self
             .tasks
             .iter()
-            .filter(|t| t.state == ExecutionState::Completed)
+            .filter(|t| {
+                t.state == ExecutionState::Completed
+                    && self
+                        .workflow
+                        .as_ref()
+                        .is_none_or(|workflow| workflow.assigned_class_work_supported(t.id))
+            })
             .count();
         let candidates = self
             .accepted
             .iter()
             .filter(|a| matches!(a.payload, Payload::Candidate { .. }))
             .count();
-        let mut text = format!("# Application security controller report\n\nRun: {}\n\nState: {:?}\n\nCompleted scope: {completed}/{} tasks. Candidate findings: {candidates}.\n\nZero findings does not establish security assurance. Candidates are not independently validated. Money and token consumption have no ceiling. Tokens are observation-only; missing observed usage is unknown, not zero. A progress watchdog warns and diagnoses suspected stalls, independently of process liveness.\n\n", self.id, self.state(), self.tasks.len());
+        let validation = if self.workflow.is_some() {
+            "Candidate submissions are not verdicts; independent source review outcomes are listed below."
+        } else {
+            "Candidates are not independently validated."
+        };
+        let mut text = format!("# Application security controller report\n\nRun: {}\n\nState: {:?}\n\nCompleted scope: {completed}/{} tasks. Candidate findings: {candidates}.\n\nZero findings does not establish security assurance. {validation} Money and token consumption have no ceiling. Tokens are observation-only; missing observed usage is unknown, not zero. A progress watchdog warns and diagnoses suspected stalls, independently of process liveness.\n\n", self.id, self.state(), self.tasks.len());
         if let Some(reason) = &self.dispatch_blocker {
             text.push_str(&format!("Dispatch blocked: {reason}\n\n"));
         }
@@ -367,7 +397,10 @@ impl Campaign {
                 ));
             }
         }
-        text.push_str("\nThe accompanying JSON contains pinned inputs, revisions, occupied slots, usage, watchdog state, attempts and accepted evidence. Runtime conformance, skills, independent validation, remediation and release acceptance are not established by this controller report.\n");
+        text.push_str("\nThe accompanying JSON contains pinned inputs, revisions, occupied slots, usage, watchdog state, attempts and accepted evidence. Live-provider conformance, reproduction, remediation and release acceptance are not established by this controller report.\n");
+        if let Some(workflow) = &self.workflow {
+            text.push_str(&workflow.markdown(self));
+        }
         text
     }
 }

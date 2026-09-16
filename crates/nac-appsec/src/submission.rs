@@ -67,7 +67,9 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     );
                 }
             },
+            Payload::Workflow { .. } => {}
         }
+        crate::workflow_admission::authorize(&snapshot, lease.task_id, &submission.payload)?;
         let evidence = submission
             .evidence
             .iter()
@@ -82,11 +84,19 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                 }
             })
             .collect::<Result<Vec<_>>>()?;
-        let payload_hash = hash(&serde_json::to_vec(&(
-            submission.schema_version,
-            &submission.payload,
-            &evidence,
-        ))?);
+        let payload_hash = if let Payload::Workflow { action, .. } = &submission.payload {
+            hash(&serde_json::to_vec(&(
+                submission.schema_version,
+                action,
+                &evidence,
+            ))?)
+        } else {
+            hash(&serde_json::to_vec(&(
+                submission.schema_version,
+                &submission.payload,
+                &evidence,
+            ))?)
+        };
         let mut accepted = None;
         self.repository
             .update(lease.run_id, None, &mut |campaign, _| {
@@ -112,6 +122,12 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     ensure!(
                         pending.payload_hash == payload_hash,
                         "idempotency conflict: reserved key has different content"
+                    );
+                }
+                if let Payload::Workflow { revision, .. } = &submission.payload {
+                    ensure!(
+                        *revision == campaign.accepted.len() as u64,
+                        "workflow revision conflict; query current work before retrying"
                     );
                 }
                 if campaign
@@ -174,6 +190,12 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     accepted = Some(existing.clone());
                     return Ok(());
                 }
+                if let Payload::Workflow { revision, .. } = &submission.payload {
+                    ensure!(
+                        *revision == campaign.accepted.len() as u64,
+                        "workflow revision conflict; query current work before retrying"
+                    );
+                }
                 let (task, _) = locate(campaign, lease)?;
                 ensure!(
                     task.state == ExecutionState::Running,
@@ -229,6 +251,7 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     evidence_state: candidate.then_some(EvidenceState::Candidate),
                     remediation_state: candidate.then_some(RemediationState::NotStarted),
                 };
+                crate::workflow_admission::apply(campaign, lease, &record)?;
                 campaign.accepted.push(record.clone());
                 campaign
                     .pending_submissions

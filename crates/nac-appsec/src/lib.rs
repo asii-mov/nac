@@ -8,15 +8,22 @@ mod runtime;
 mod skills;
 mod source;
 mod submission;
+mod workflow;
+mod workflow_admission;
+mod workflow_questions;
+mod workflow_records;
 
 pub use artifacts::ArtifactStore;
 pub use brief::{Assurance, RenderedBrief, ResearchBrief};
 pub use controller::Controller;
 pub use records::*;
 pub use repository::{Repository, SqliteRepository};
-pub use retrieval::{SourceFiles, SourceInventory, SourceRead, SourceReceipt};
+pub use retrieval::{
+    InventoryEnumeration, InventoryReceipt, SourceFiles, SourceInventory, SourceRead, SourceReceipt,
+};
 pub use runtime::{Assignment, Runtime, RuntimeExit, RuntimeObservation};
 pub use skills::{FrozenResearch, FrozenSkill, LockedSkill, PreparedResearch, SkillLock};
+pub use workflow_records::*;
 
 pub type Result<T> = anyhow::Result<T>;
 
