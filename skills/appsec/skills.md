@@ -6,7 +6,7 @@ including transitive references. The registry is an application convention, not
 ambient NAC skill discovery. Active campaigns reject edits rather than absorbing them.
 
 ```json
-{"recon":["recon"],"discovery":["discovery"],"validation":["validation"]}
+{"recon":["recon"],"discovery":["discovery"],"validation":["validation"],"synthesis":["synthesis"]}
 ```
 
 This release supports source-only review. Reproduction, remediation, arbitrary

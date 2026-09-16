@@ -13,7 +13,7 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1] / "skills" / "appsec"
     skills = {}
-    for name in ["evidence", "recon", "discovery", "validation"]:
+    for name in ["evidence", "recon", "discovery", "validation", "synthesis"]:
         files = sorted((root / "skills" / name).rglob("*"))
         if any(path.is_symlink() for path in files):
             raise SystemExit("skill resources must not be symlinks")

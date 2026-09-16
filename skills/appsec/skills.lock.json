@@ -1,6 +1,6 @@
 {
   "compatibility": "nac-source-review-v1",
-  "registry_sha256": "7e331717d667980eb99c696d37449fcd09e1c1849883a07e38bce625cd3e80ca",
+  "registry_sha256": "50f117f77b67d862b0b3d2b413f7687f3953117e1a69f4a61ecc236c89c8ee41",
   "schema_version": 1,
   "skills": {
     "discovery": {
@@ -9,7 +9,7 @@
       ],
       "entry": "skills/discovery/SKILL.md",
       "files": {
-        "skills/discovery/SKILL.md": "5e9984dd34a6b228dc8394fa52d537241ba9fcd124a0b6459ba47d55cd52b99c"
+        "skills/discovery/SKILL.md": "a8c79e0cceb22ee6c77675a5213063dba40c3b9e5606f021605e7e42f890ed96"
       },
       "stages": [
         "discovery"
@@ -34,10 +34,23 @@
       ],
       "entry": "skills/recon/SKILL.md",
       "files": {
-        "skills/recon/SKILL.md": "fe0d5f3d410e5cb1cefa5904e6b92782250588a35abb09b0edc7f37f422768cf"
+        "skills/recon/SKILL.md": "6978caaee2356db9d57ffab1dfaa307a097ca2b5bad7992b8614a5e482ae635c"
       },
       "stages": [
         "recon"
+      ],
+      "version": "1.0.0"
+    },
+    "synthesis": {
+      "dependencies": [
+        "evidence"
+      ],
+      "entry": "skills/synthesis/SKILL.md",
+      "files": {
+        "skills/synthesis/SKILL.md": "d0b441eeea34ee0a63c05952c391e1cc02203bd6a28aec3c74d087489a93c8c9"
+      },
+      "stages": [
+        "synthesis"
       ],
       "version": "1.0.0"
     },
@@ -47,7 +60,7 @@
       ],
       "entry": "skills/validation/SKILL.md",
       "files": {
-        "skills/validation/SKILL.md": "58913a73df2f656e374fc6a5c60a074fb27292848e16d16f36a8881756a58dc9"
+        "skills/validation/SKILL.md": "c86bd7a086a8abe7dc473f23345a29e04e3ffc1725852a89833da88a087d10b7"
       },
       "stages": [
         "validation"

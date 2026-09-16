@@ -51,6 +51,10 @@ pub struct FrozenResearch {
     pub brief: ResearchBrief,
     pub stages: BTreeMap<String, String>,
     pub selected: BTreeMap<String, Vec<FrozenSkill>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub templates: BTreeMap<String, Vec<FrozenSkill>>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub workflow: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -93,11 +97,8 @@ impl FrozenResearch {
             .context("unterminated stage registry")?
             .0;
         let registry: BTreeMap<String, Vec<String>> = serde_json::from_str(registry_json)?;
-        let mut selected = BTreeMap::new();
-        for (task, stage) in &stages {
-            let ids = registry
-                .get(stage)
-                .context("stage has no registered skills")?;
+        let mut templates = BTreeMap::new();
+        for (stage, ids) in &registry {
             ensure!(!ids.is_empty(), "stage skills are empty");
             let mut seen = BTreeSet::new();
             let mut visiting = BTreeSet::new();
@@ -113,8 +114,20 @@ impl FrozenResearch {
                     &mut skills,
                 )?;
             }
-            selected.insert(task.clone(), skills);
+            templates.insert(stage.clone(), skills);
         }
+        let selected = stages
+            .iter()
+            .map(|(task, stage)| {
+                Ok((
+                    task.clone(),
+                    templates
+                        .get(stage)
+                        .context("stage has no registered skills")?
+                        .clone(),
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
         ensure!(!selected.is_empty(), "research needs a stage assignment");
         Ok(Self {
             root: root.to_path_buf(),
@@ -123,11 +136,29 @@ impl FrozenResearch {
             brief,
             stages,
             selected,
+            templates,
+            workflow: false,
         })
     }
 
     pub fn verify(&self) -> Result<()> {
-        let actual = Self::resolve(&self.root, self.brief.clone(), self.stages.clone())?;
+        let mut actual = Self::resolve(&self.root, self.brief.clone(), self.stages.clone())?;
+        if self.templates.is_empty() {
+            actual.templates.clear();
+        }
+        actual.workflow = self.workflow;
+        if self.workflow {
+            ensure!(
+                self.stages.len() == 1 && self.stages.values().all(|stage| stage == "recon"),
+                "workflow starts with exactly one recon root"
+            );
+            for stage in ["recon", "discovery", "validation", "synthesis"] {
+                ensure!(
+                    self.templates.contains_key(stage),
+                    "workflow stage missing from original frozen lock: {stage}"
+                );
+            }
+        }
         ensure!(
             serde_json::to_vec(&actual)? == serde_json::to_vec(self)?,
             "frozen research input drift"
@@ -137,12 +168,21 @@ impl FrozenResearch {
 
     pub fn prepare(&self, task: &str) -> Result<PreparedResearch> {
         self.verify()?;
-        let brief = self.brief.render()?;
         let skills = self
             .selected
             .get(task)
             .context("task has no selected skill")?
             .clone();
+        self.render(skills)
+    }
+
+    pub fn prepare_stage(&self, stage: &str) -> Result<PreparedResearch> {
+        self.verify()?;
+        self.render(self.templates.get(stage).context("stage absent from original frozen templates; start a new campaign to adopt skills")?.clone())
+    }
+
+    fn render(&self, skills: Vec<FrozenSkill>) -> Result<PreparedResearch> {
+        let brief = self.brief.render()?;
         let mut prompt = brief.text;
         for skill in &skills {
             prompt.push_str(&format!(

@@ -8,8 +8,8 @@ is canonical; runtime episodes and final prose cannot authorize acceptance.
 
 - `records.rs` owns strict version-1 manifests and durable campaign records.
   Execution state, candidate evidence state, and remediation state are separate.
-  Only candidate/not-started evidence and remediation states have consumers in
-  this layer. Do not add empty future workflow stages.
+  Candidate evidence remains immutable. Independent source verdicts append as
+  separate accepted records. Remediation remains not-started.
 - `controller.rs` owns admission, cancellation, resumption and reconciliation.
   Tokens and money have no ceilings. Separate liveness, meaningful progress,
   warning/diagnostic state and failed-recovery streaks drive the watchdog.
@@ -23,6 +23,13 @@ is canonical; runtime episodes and final prose cannot authorize acceptance.
   `source.rs` reads Git blobs at full declared commits, not checkout contents.
 - `runtime.rs` owns the scheduler port. A runtime's capability declaration is
   a trusted adapter contract, not proof that a provider implements it.
+- `workflow_records.rs` owns consumed recon, coverage, family, synthesis and
+  validation contracts. `workflow_admission.rs` applies them in the existing
+  acceptance transaction. `workflow.rs` owns role-scoped queries, prepared
+  contexts, observed input provenance, effort accounting and workflow reports.
+  These modules do not own a second database or model loop.
+- `workflow_questions.rs` validates append-only source questions and their cited
+  resolutions. These are not the frozen map's fixed required-input blockers.
 - `tests/cases/` owns real repository/filesystem/concurrency/crash fixtures.
   The child worker entry point exists only inside the integration-test binary.
 
@@ -85,8 +92,28 @@ not reported as passing. Controlled experiments remain unsupported.
 `brief.rs` renders typed assurance metadata and exact hashes. `skills.rs` resolves
 the versioned registry and transitive resource lock without following paths;
 `retrieval.rs` owns lease-checked pinned source and task-owned artifact ranges.
+Inventory receipts track the union of delivered file-index ranges, an explicit
+start marker and the pinned listing identity. A partial or hash-only receipt is
+not map coverage; only complete enumeration can be frozen into a baseline.
 Frozen research inputs are additive manifest data. Active campaigns reject drift
 and must not silently re-resolve to a newer skill release.
+
+Workflow mode is explicit (`appsec freeze --workflow`). It starts with one recon
+root and captures registered stage templates from the original frozen lock, not
+placeholder tasks. Legacy manual and source-only manifests remain supported and
+do not acquire workflow authority on read. See `docs/appsec-workflow.md` for the
+additive storage migration, decision revisions and conservative effort rule.
+
+The workflow decision revision is the accepted-record count, checked at reservation
+and final acceptance. Heartbeat-only aggregate revisions must not starve model
+decisions. The SQLite aggregate still has its own transaction revision. Workflow
+idempotency hashes omit the decision revision so a refreshed, identical decision
+can retry its reserved key. Changed semantic content cannot reuse that key.
+
+Parent topology never doubles as a completion dependency. Synthesis waits for
+settled same-round work, including validation and physical cleanup. The existing
+host-wide slot reservation counts every admitted role and retained cleanup slot.
+Validator queries must remain blind to discoverer records and artifacts.
 
 ## Verification
 

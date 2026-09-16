@@ -19,7 +19,7 @@ impl<R: Repository, C: Clock> Controller<R, C> {
     pub fn create(&self, manifest: Manifest) -> Result<Campaign> {
         validate_manifest(&manifest)?;
         let now = self.clock.now_ms()?;
-        let campaign = Campaign {
+        let mut campaign = Campaign {
             schema_version: 1,
             id: Id::new(),
             revision: 0,
@@ -45,7 +45,9 @@ impl<R: Repository, C: Clock> Controller<R, C> {
             dispatch_blocker: None,
             accepted: vec![],
             pending_submissions: vec![],
+            workflow: None,
         };
+        campaign.workflow = Workflow::initialize(&campaign)?;
         self.repository.insert(&campaign)?;
         Ok(campaign)
     }
@@ -82,6 +84,7 @@ impl<R: Repository, C: Clock> Controller<R, C> {
             anyhow::bail!(reason);
         }
         let mut assignment = None;
+        let mut input_error = None;
         self.repository
             .update(run, Some(revision), &mut |campaign, host_available| {
                 let now = self.clock.now_ms()?;
@@ -91,16 +94,58 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     active < host_available && active < campaign.manifest.max_concurrency,
                     "concurrency reservation exhausted"
                 );
-                let Some(index) = campaign.tasks.iter().position(|task| {
-                    task.state == ExecutionState::Queued
-                        && task.plan.dependencies.iter().all(|key| {
-                            campaign.tasks.iter().any(|dependency| {
-                                dependency.plan.key == *key
-                                    && dependency.state == ExecutionState::Completed
+                let Some(index) = campaign
+                    .tasks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, task)| {
+                        task.state == ExecutionState::Queued
+                            && campaign
+                                .workflow
+                                .as_ref()
+                                .is_none_or(|workflow| workflow.ready(campaign, task))
+                            && task.plan.dependencies.iter().all(|key| {
+                                campaign.tasks.iter().any(|dependency| {
+                                    dependency.plan.key == *key
+                                        && dependency.state == ExecutionState::Completed
+                                })
                             })
-                        })
-                }) else {
+                    })
+                    .min_by_key(|(index, task)| {
+                        (
+                            campaign
+                                .workflow
+                                .as_ref()
+                                .map(|w| w.priority(campaign, task))
+                                .unwrap_or_default(),
+                            *index,
+                        )
+                    })
+                    .map(|(index, _)| index)
+                else {
                     return Ok(());
+                };
+                let prepared = if let Some(workflow) = &campaign.workflow {
+                    workflow
+                        .prepare(campaign, campaign.tasks[index].id)
+                        .map(Some)
+                } else {
+                    campaign
+                        .manifest
+                        .research
+                        .as_ref()
+                        .map(|research| research.prepare(&campaign.tasks[index].plan.key))
+                        .transpose()
+                };
+                let prepared = match prepared {
+                    Ok(prepared) => prepared,
+                    Err(error) => {
+                        let reason = format!("frozen research input unavailable: {error}");
+                        campaign.dispatch_blocker = Some(reason.clone());
+                        campaign.updated_ms = now;
+                        input_error = Some(reason);
+                        return Ok(());
+                    }
                 };
                 let task = &mut campaign.tasks[index];
                 ensure!(
@@ -128,6 +173,7 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     &task.plan,
                     &task.handoff,
                     generation,
+                    &prepared,
                 ))?);
                 task.attempts.push(Attempt {
                     lease: lease.clone(),
@@ -161,15 +207,13 @@ impl<R: Repository, C: Clock> Controller<R, C> {
                     handoff: task.handoff.clone(),
                     limits: task.plan.operation_limits,
                     deadline_ms,
-                    research: campaign
-                        .manifest
-                        .research
-                        .as_ref()
-                        .map(|research| research.prepare(&task.plan.key))
-                        .transpose()?,
+                    research: prepared,
                 });
                 Ok(())
             })?;
+        if let Some(error) = input_error {
+            anyhow::bail!(error);
+        }
         if let Some(assignment) = &assignment {
             if runtime.start(assignment).is_err() {
                 self.repository.update(run, None, &mut |campaign, _| {
@@ -218,18 +262,24 @@ impl<R: Repository, C: Clock> Controller<R, C> {
         );
         self.repository
             .update(run, Some(revision), &mut |campaign, _| {
+                let unresolved_validation = campaign
+                    .workflow
+                    .as_ref()
+                    .and_then(|workflow| workflow.latest_validation(campaign, task_id))
+                    .is_some_and(|v| !v.is_resolved());
                 let task = campaign
                     .tasks
                     .iter_mut()
                     .find(|t| t.id == task_id)
                     .ok_or_else(|| anyhow::anyhow!("unknown task"))?;
                 ensure!(
-                    !matches!(
-                        task.state,
-                        ExecutionState::Queued
-                            | ExecutionState::Running
-                            | ExecutionState::Completed
-                    ),
+                    (unresolved_validation && task.state == ExecutionState::Completed)
+                        || !matches!(
+                            task.state,
+                            ExecutionState::Queued
+                                | ExecutionState::Running
+                                | ExecutionState::Completed
+                        ),
                     "task is not resumable"
                 );
                 ensure!(

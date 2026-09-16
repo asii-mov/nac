@@ -5,7 +5,7 @@ use nac_appsec::{
 };
 use std::sync::{Arc, Mutex};
 
-pub(crate) const TOOL_NAMES: [&str; 7] = [
+pub(crate) const TOOL_NAMES: [&str; 10] = [
     "list_source_files",
     "read_source",
     "search_source",
@@ -13,6 +13,9 @@ pub(crate) const TOOL_NAMES: [&str; 7] = [
     "submit_stage_result",
     "record_blocker",
     "read_artifact_range",
+    "query_work",
+    "submit_workflow",
+    "read_work_record",
 ];
 
 #[derive(Clone)]
@@ -57,7 +60,74 @@ struct ArtifactRange {
     length: u64,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkQuery {
+    offset: usize,
+    limit: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkRead {
+    record_id: Id,
+    offset: usize,
+    length: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkflowInput {
+    key: String,
+    revision: u64,
+    action: nac_appsec::WorkflowAction,
+    evidence: Vec<EvidenceInput>,
+}
+
 impl ResearchTools {
+    pub fn record_loaded(&self, proof: &LoadedWorkerInputs) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        let campaign = self.controller.status(self.lease.run_id)?;
+        if let Some(workflow) = campaign.workflow {
+            let job = workflow
+                .jobs
+                .get(&self.lease.task_id)
+                .context("missing workflow job")?;
+            let mut executable = std::fs::File::open(std::env::current_exe()?)?;
+            let mut hasher = Sha256::new();
+            let mut buffer = [0u8; 65536];
+            loop {
+                let length = std::io::Read::read(&mut executable, &mut buffer)?;
+                if length == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..length]);
+            }
+            let binary_hash = format!("{:x}", hasher.finalize());
+            self.controller.record_effective_inputs(
+                &self.lease,
+                nac_appsec::EffectiveInputs {
+                    model: proof.model.clone(),
+                    backend: proof.backend.clone(),
+                    reasoning: proof.reasoning.clone(),
+                    runtime: format!(
+                        "nac-server/{} executable-sha256:{binary_hash}",
+                        env!("CARGO_PKG_VERSION")
+                    ),
+                    extractor: format!("nac-appsec/pinned-git-v1 executable-sha256:{binary_hash}"),
+                    prompt_sha256: proof.prompt_sha256.clone(),
+                    context_sha256: job.input_sha256.clone(),
+                    session_id: proof.session_id.clone(),
+                    thread_name: proof.thread_name.clone(),
+                    dispatch_id: proof.dispatch_id.clone(),
+                    action_sha256: proof.action_sha256.clone(),
+                    messages_sha256: proof.messages_sha256.clone(),
+                },
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn new(state: &Path, lease: Lease) -> Result<Self> {
         Ok(Self {
             controller: Arc::new(Controller::new(
@@ -72,6 +142,32 @@ impl ResearchTools {
 
     pub fn call(&self, name: &str, arguments: serde_json::Value) -> Result<serde_json::Value> {
         let submission = match name {
+            "read_work_record" => {
+                let request: WorkRead = serde_json::from_value(arguments)?;
+                return self.controller.read_work_record(
+                    &self.lease,
+                    request.record_id,
+                    request.offset,
+                    request.length,
+                );
+            }
+            "query_work" => {
+                let query: WorkQuery = serde_json::from_value(arguments)?;
+                return self
+                    .controller
+                    .query_work(&self.lease, query.offset, query.limit);
+            }
+            "submit_workflow" => {
+                let input: WorkflowInput = serde_json::from_value(arguments)?;
+                (
+                    input.key,
+                    Payload::Workflow {
+                        revision: input.revision,
+                        action: input.action,
+                    },
+                    input.evidence,
+                )
+            }
             "list_source_files" => {
                 return Ok(serde_json::to_value(self.controller.list_source_files(
                     &self.lease,

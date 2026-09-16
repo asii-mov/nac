@@ -149,6 +149,7 @@ pub async fn supervise_appsec_worker(directory: &Path) -> Result<()> {
     } else {
         expected_backend
     };
+    let loaded_tools = tools.clone();
     let connection_task = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await?;
         ensure!(
@@ -184,6 +185,7 @@ pub async fn supervise_appsec_worker(directory: &Path) -> Result<()> {
                             && proof.source_threads.is_empty(),
                         "worker loaded unexpected inputs"
                     );
+                    loaded_tools.record_loaded(&proof)?;
                     incoming
                         .lock()
                         .map_err(|_| anyhow::anyhow!("worker observation lock poisoned"))?
