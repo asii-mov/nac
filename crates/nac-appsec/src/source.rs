@@ -8,6 +8,9 @@ use std::{
 
 pub(crate) fn validate_manifest(manifest: &Manifest) -> Result<()> {
     crate::require_version(manifest.schema_version)?;
+    if let Some(profile) = &manifest.remediation {
+        profile.verify(manifest)?;
+    }
     if let Some(profile) = &manifest.experiments {
         profile.verify(&manifest.repositories)?;
         ensure!(

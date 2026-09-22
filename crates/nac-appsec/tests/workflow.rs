@@ -1,4 +1,12 @@
-#[allow(dead_code)]
+#![allow(
+    clippy::redundant_clone,
+    reason = "workflow fixtures keep independently meaningful values explicit"
+)]
+
+#[allow(
+    dead_code,
+    reason = "shared integration support exposes a broader fixture API"
+)]
 mod support;
 use nac_appsec::*;
 use std::collections::BTreeMap;

@@ -1,3 +1,8 @@
+#![allow(
+    clippy::unwrap_used,
+    reason = "the checked-in skill fixture path is a build-time invariant"
+)]
+
 use anyhow::{ensure, Result};
 use nac_appsec::*;
 use sha2::{Digest, Sha256};

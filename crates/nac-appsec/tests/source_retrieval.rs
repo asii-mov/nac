@@ -1,3 +1,7 @@
+#[allow(
+    dead_code,
+    reason = "shared integration support exposes a broader fixture API"
+)]
 mod support;
 use anyhow::Result;
 use nac_appsec::*;

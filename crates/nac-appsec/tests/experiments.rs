@@ -1,4 +1,7 @@
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared integration support exposes a broader fixture API"
+)]
 mod support;
 
 use nac_appsec::*;

@@ -37,6 +37,24 @@ impl AppsecControl {
         })
     }
 
+    pub fn open_with_resource_capacity(
+        state: &Path,
+        target_capacity: u32,
+        remediation_worker_capacity: u32,
+    ) -> Result<Self> {
+        let repository = SqliteRepository::open_with_resource_capacity(
+            state,
+            4,
+            target_capacity,
+            remediation_worker_capacity,
+        )?;
+        let artifacts = ArtifactStore::open(state)?;
+        Ok(Self {
+            controller: Controller::new(repository, artifacts, SystemClock),
+            state: state.to_path_buf(),
+        })
+    }
+
     pub fn run(&self, manifest: Manifest) -> Result<Campaign> {
         if let Some(profile) = &manifest.experiments {
             let root = self.state.join("packages");
@@ -193,5 +211,91 @@ impl AppsecControl {
 
     pub fn resume(&self, run: Id, revision: u64, task: Id, handoff: &str) -> Result<Campaign> {
         self.controller.resume(run, revision, task, handoff)
+    }
+
+    pub fn request_remediation(
+        &self,
+        run: Id,
+        revision: u64,
+        request: nac_appsec::StartRemediation,
+    ) -> Result<nac_appsec::RemediationCase> {
+        self.controller.request_remediation(run, revision, request)
+    }
+
+    pub fn remediation(&self, run: Id, remediation: Id) -> Result<nac_appsec::RemediationCaseView> {
+        self.controller.read_remediation(run, remediation)
+    }
+
+    pub fn reconcile_remediation<G: nac_appsec::PatchGenerator, E: nac_appsec::PatchEvaluator>(
+        &self,
+        run: Id,
+        remediation: Id,
+        generator: &mut G,
+        evaluator: &mut E,
+    ) -> Result<nac_appsec::RemediationCase> {
+        self.controller
+            .reconcile_remediation(run, remediation, generator, evaluator)
+    }
+
+    pub fn cancel_remediation(
+        &self,
+        run: Id,
+        remediation: Id,
+        revision: u64,
+    ) -> Result<nac_appsec::RemediationCase> {
+        self.controller
+            .cancel_remediation(run, remediation, revision)
+    }
+
+    pub fn recover_remediation(
+        &self,
+        run: Id,
+        remediation: Id,
+        revision: u64,
+    ) -> Result<nac_appsec::RemediationCase> {
+        self.controller
+            .recover_remediation(run, remediation, revision)
+    }
+
+    pub fn approve_remediation(
+        &self,
+        run: Id,
+        remediation: Id,
+        revision: u64,
+        approval: nac_appsec::RemediationApproval,
+    ) -> Result<nac_appsec::RemediationCase> {
+        self.controller
+            .approve_remediation(run, remediation, revision, approval)
+    }
+
+    pub fn request_remediation_publication(
+        &self,
+        run: Id,
+        remediation: Id,
+        revision: u64,
+        target: nac_appsec::PublicationTarget,
+    ) -> Result<nac_appsec::RemediationCase> {
+        self.controller
+            .request_remediation_publication(run, remediation, revision, target)
+    }
+
+    pub fn reconcile_remediation_publication<P: nac_appsec::DraftPublisher>(
+        &self,
+        run: Id,
+        remediation: Id,
+        publisher: &mut P,
+    ) -> Result<nac_appsec::RemediationCase> {
+        self.controller
+            .reconcile_remediation_publication(run, remediation, publisher)
+    }
+
+    pub fn materialize_remediation_package(
+        &self,
+        run: Id,
+        package: Id,
+        destination: &Path,
+    ) -> Result<nac_appsec::RemediationPackage> {
+        self.controller
+            .materialize_remediation_package(run, package, destination)
     }
 }

@@ -47,6 +47,7 @@ impl<R: Repository, C: Clock> Controller<R, C> {
             pending_submissions: vec![],
             experiments: vec![],
             workflow: None,
+            remediations: vec![],
         };
         campaign.workflow = Workflow::initialize(&campaign)?;
         self.repository.insert(&campaign)?;

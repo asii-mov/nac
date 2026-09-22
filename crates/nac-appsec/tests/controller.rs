@@ -1,3 +1,9 @@
+#![allow(
+    clippy::needless_collect,
+    clippy::redundant_clone,
+    reason = "concurrency fixtures keep ownership and launch phases explicit"
+)]
+
 #[path = "cases/budgets.rs"]
 mod budgets;
 #[path = "cases/checkpoint_cleanup.rs"]

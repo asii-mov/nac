@@ -149,6 +149,7 @@ impl Campaign {
             .flat_map(|experiment| &experiment.trials)
             .filter(|trial| trial.holds_target())
             .count()
+            .saturating_add(self.occupied_remediation_targets())
     }
 
     pub(crate) fn fence_experiments(&mut self, now: u64) {

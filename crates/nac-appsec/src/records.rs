@@ -78,6 +78,8 @@ pub struct TaskPlan {
 pub struct Manifest {
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remediation: Option<crate::GoAuthorizationRemediationProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub experiments: Option<crate::ExperimentProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub research: Option<crate::FrozenResearch>,
@@ -319,6 +321,8 @@ pub struct Campaign {
     pub experiments: Vec<crate::Experiment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<crate::Workflow>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remediations: Vec<crate::RemediationCase>,
 }
 
 impl Campaign {

@@ -110,6 +110,7 @@ pub fn manifest(tasks: usize) -> Result<Manifest> {
     .collect();
     Ok(Manifest {
         schema_version: 1,
+        remediation: None,
         experiments: None,
         research: None,
         repositories: vec![RepositoryInput {

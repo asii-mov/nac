@@ -6,6 +6,11 @@ mod experiment_records;
 mod experiments;
 mod package;
 mod records;
+mod remediation;
+mod remediation_package;
+mod remediation_records;
+mod remediation_reducer;
+mod remediation_runtime;
 mod repository;
 mod retrieval;
 mod runtime;
@@ -24,6 +29,8 @@ pub use dependencies::{DependencyRead, PrefetchedDependency};
 pub use experiment_records::*;
 pub use package::{PackageFile, SourcePackage};
 pub use records::*;
+pub use remediation_records::*;
+pub use remediation_runtime::{DraftPublisher, PatchEvaluator, PatchGenerator};
 pub use repository::{Repository, SqliteRepository};
 pub use retrieval::{
     DependencySourceRead, InventoryEnumeration, InventoryReceipt, SourceFiles, SourceInventory,
