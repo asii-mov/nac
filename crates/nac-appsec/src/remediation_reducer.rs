@@ -531,16 +531,15 @@ fn canonical_patch_diff(
     profile: &GoAuthorizationRemediationProfile,
     proposal: &PatchGeneratorSubmission,
 ) -> Result<Vec<u8>> {
-    let mut output = String::new();
+    let mut entries = Vec::with_capacity(proposal.replacements.len());
     for replacement in &proposal.replacements {
         let replacement_bytes =
             artifacts.read_range(&replacement.content, 0, replacement.content.bytes)?;
-        let replacement_text = canonical_go_text(&replacement_bytes)?;
         let original =
             profile.source_package.files.iter().find(|file| {
                 file.repository == profile.repository && file.path == replacement.path
             });
-        let original_text = if let Some(file) = original {
+        let original_bytes = if let Some(file) = original {
             let repository = campaign
                 .manifest
                 .repositories
@@ -552,18 +551,50 @@ fn canonical_patch_diff(
                 hash(&bytes) == file.content_sha256,
                 "patch preimage source drift"
             );
-            canonical_go_text(&bytes)?.to_owned()
+            Some(bytes)
         } else {
-            String::new()
+            None
+        };
+        entries.push(ReplacementDiffEntry {
+            path: replacement.path.clone(),
+            original: original_bytes,
+            replacement: replacement_bytes,
+        });
+    }
+    canonical_replacement_diff(&entries)
+}
+
+/// One file's exact preimage/replacement bytes in canonical path order.
+/// `original` is `None` for a newly created file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplacementDiffEntry {
+    pub path: String,
+    pub original: Option<Vec<u8>>,
+    pub replacement: Vec<u8>,
+}
+
+/// The exact full-file unified diff projection [`canonical_patch_diff`] also
+/// derives from stored artifacts and pinned Git blobs, exposed so a
+/// `PatchGenerator` already holding exact original/replacement bytes (for
+/// example a controlled-coding capture) can reproduce the same bytes without
+/// duplicating the diff-rendering rules.
+pub fn canonical_replacement_diff(entries: &[ReplacementDiffEntry]) -> Result<Vec<u8>> {
+    let mut output = String::new();
+    for entry in entries {
+        let path = &entry.path;
+        let replacement_text = canonical_go_text(&entry.replacement)?;
+        let original_text = match &entry.original {
+            Some(bytes) => canonical_go_text(bytes)?.to_owned(),
+            None => String::new(),
         };
         let original_lines = original_text.lines().count();
         let replacement_lines = replacement_text.lines().count();
-        if original.is_some() {
-            output.push_str(&format!("--- a/{}\n", replacement.path));
+        if entry.original.is_some() {
+            output.push_str(&format!("--- a/{path}\n"));
         } else {
             output.push_str("--- /dev/null\n");
         }
-        output.push_str(&format!("+++ b/{}\n", replacement.path));
+        output.push_str(&format!("+++ b/{path}\n"));
         output.push_str(&format!(
             "@@ -{},{} +{},{} @@\n",
             usize::from(original_lines > 0),

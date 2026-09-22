@@ -30,6 +30,7 @@ pub use experiment_records::*;
 pub use package::{PackageFile, SourcePackage};
 pub use records::*;
 pub use remediation_records::*;
+pub use remediation_reducer::{canonical_replacement_diff, ReplacementDiffEntry};
 pub use remediation_runtime::{DraftPublisher, PatchEvaluator, PatchGenerator};
 pub use repository::{Repository, SqliteRepository};
 pub use retrieval::{
